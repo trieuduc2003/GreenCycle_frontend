@@ -1,0 +1,24 @@
+GreenCycle/
+├── Models/                 // Định nghĩa dữ liệu
+│   ├── User.cs             // Thông tin người dùng
+│   ├── TrashItem.cs        // Phân loại rác
+│   └── Reward.cs           // Vật phẩm đổi điểm
+├── Services/               // Nơi gọi API (HttpClient)
+│   ├── IAuthService.cs     // Interface cho Service
+│   ├── AuthService.cs      // Implement gọi API đăng nhập
+│   ├── ITrashService.cs
+│   └── TrashService.cs     // Implement gọi API rác
+├── ViewModels/             // Logic màn hình
+│   ├── Auth/
+│   │   └── LoginViewModel.cs
+│   └── Seller/
+│       └── DashboardViewModel.cs
+├── Views/                  // Giao diện (XAML)
+│   ├── Auth/
+│   │   └── LoginPage.xaml
+│   └── Seller/
+│       └── DashboardPage.xaml
+├── Converters/             // Chuyển đổi dữ liệu (ví dụ: điểm -> màu sắc)
+│   └── PointsToColorConverter.cs
+├── MauiProgram.cs          // Nơi ĐĂNG KÝ (Dependency Injection) các Service và ViewModel
+└── AppShell.xaml           // Định nghĩa các đường dẫn điều hướng
