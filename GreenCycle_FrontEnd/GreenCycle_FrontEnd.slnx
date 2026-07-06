@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/TutorialFormLayer/">
-    <File Path="TutorialFormLayer.txt" />
-  </Folder>
-  <Project Path="GreenCycle_FrontEnd/GreenCycle_FrontEnd.csproj">
-    <Deploy Solution="Debug|*" />
-  </Project>
-</Solution>
