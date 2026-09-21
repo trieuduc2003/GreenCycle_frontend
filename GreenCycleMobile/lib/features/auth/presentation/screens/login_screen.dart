@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/login_dto.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/google_login_button.dart';
 import 'register_screen.dart';
+import 'role_selection_screen.dart';
 import '../../../seller/presentation/screens/seller_home_screen.dart';
+import '../../../yard/presentation/screens/yard_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,6 +22,35 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final _authRepository = AuthRepository();
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
+
+  // Google OAuth Client IDs
+  static const String _serverClientId =
+      '348318262413-l1g4gv3ij3op2uev9end4rusujti2fvb.apps.googleusercontent.com';
+  static const String _clientId =
+      '348318262413-vep193tl9593jihtf1bbmjsl175asnna.apps.googleusercontent.com';
+
+  @override
+  void initState() {
+    super.initState();
+    _ensureGoogleSignInInitialized();
+  }
+
+  bool _isGoogleSignInInitialized = false;
+
+  Future<void> _ensureGoogleSignInInitialized() async {
+    if (_isGoogleSignInInitialized) return;
+    try {
+      await GoogleSignIn.instance.initialize(
+        serverClientId: _serverClientId,
+        clientId: _clientId,
+      ).timeout(const Duration(seconds: 5));
+      _isGoogleSignInInitialized = true;
+    } catch (_) {
+      // Bỏ qua lỗi nếu đã init từ trước trên platform khác
+      _isGoogleSignInInitialized = true;
+    }
+  }
 
   @override
   void dispose() {
@@ -45,26 +77,68 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _isLoading = false);
 
       if (!mounted) return;
-
-      // Điều hướng theo role
-      if (response.roleName == 'Seller') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SellerHomeScreen(
-              token: response.token,
-              fullName: response.fullName,
-            ),
-          ),
-        );
-      } else {
-        // Các role khác sẽ được xử lý sau
-        _showMessage('Đăng nhập thành công! Chào ${response.fullName} (${response.roleName})');
-      }
+      _navigateBasedOnRole(response);
     } catch (e) {
       setState(() => _isLoading = false);
       _showMessage(e.toString().replaceAll('Exception: ', ''));
     }
+  }
+
+  Future<void> _onGoogleLoginPressed() async {
+    setState(() => _isGoogleLoading = true);
+
+    try {
+      await _ensureGoogleSignInInitialized();
+      final account = await GoogleSignIn.instance.authenticate().timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => throw Exception('Đăng nhập Google quá hạn. Hãy kiểm tra kết nối mạng của bạn.'),
+      );
+      final idToken = account.authentication.idToken;
+
+      if (idToken == null || idToken.isEmpty) {
+        throw Exception('Không nhận được mã xác thực từ Google. Vui lòng thử lại.');
+      }
+
+      final response = await _authRepository.googleLogin(idToken);
+
+      if (!mounted) return;
+      setState(() => _isGoogleLoading = false);
+
+      _navigateBasedOnRole(response);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isGoogleLoading = false);
+
+      final errorMsg = e.toString().replaceAll('Exception: ', '');
+      // Không hiển thị lỗi nếu người dùng chủ động đóng/hủy popup đăng nhập Google
+      if (!errorMsg.toLowerCase().contains('canceled') &&
+          !errorMsg.toLowerCase().contains('cancelled') &&
+          !errorMsg.toLowerCase().contains('hủy')) {
+        _showMessage(errorMsg);
+      }
+    }
+  }
+
+  void _navigateBasedOnRole(LoginResponseDto response) {
+    Widget destination;
+    switch (response.roleName) {
+      case 'Seller':
+        destination = SellerHomeScreen(token: response.token, fullName: response.fullName);
+        break;
+      case 'ScrapYard':
+      case 'YardOwner':
+        destination = YardDashboardScreen(token: response.token, fullName: response.fullName);
+        break;
+      case 'Collector':
+      default:
+        destination = RoleSelectionScreen(token: response.token, fullName: response.fullName);
+        break;
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => destination),
+    );
   }
 
   void _showMessage(String message) {
@@ -112,7 +186,10 @@ class _LoginScreenState extends State<LoginScreen> {
               _buildDivider(),
               const SizedBox(height: 24),
 
-              GoogleLoginButton(onPressed: () {}),
+              GoogleLoginButton(
+                onPressed: (_isLoading || _isGoogleLoading) ? null : _onGoogleLoginPressed,
+                isLoading: _isGoogleLoading,
+              ),
               const SizedBox(height: 40),
               _buildFooterTerms(),
               const SizedBox(height: 20),
@@ -137,7 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: _isLoading ? null : _onLoginPressed,
+        onPressed: (_isLoading || _isGoogleLoading) ? null : _onLoginPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryGreen,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

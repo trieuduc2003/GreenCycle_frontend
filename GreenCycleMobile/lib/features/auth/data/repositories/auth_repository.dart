@@ -32,6 +32,31 @@ class AuthRepository {
     }
   }
 
+  // ─── ĐĂNG NHẬP GOOGLE ───────────────────────────────────────────────────
+  /// Đăng nhập bằng ID Token từ Google OAuth
+  Future<LoginResponseDto> googleLogin(String idToken, {int? roleId}) async {
+    try {
+      final request = GoogleLoginRequestDto(idToken: idToken, roleId: roleId);
+      final response = await http.post(
+        Uri.parse(ApiEndpoints.googleLogin),
+        headers: _headers,
+        body: jsonEncode(request.toJson()),
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw Exception('Kết nối máy chủ bị timeout'),
+      );
+
+      if (response.statusCode == 200) {
+        return LoginResponseDto.fromJson(jsonDecode(response.body));
+      } else {
+        throw Exception(_parseError(response, 'Đăng nhập bằng Google thất bại'));
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Lỗi kết nối máy chủ: $e');
+    }
+  }
+
   // ─── ĐĂNG KÝ - BƯỚC 1: GỬI OTP ──────────────────────────────────────────
   /// Gửi OTP về SĐT để xác thực số điện thoại trước khi đăng ký
   Future<void> sendOtp(String phone) async {

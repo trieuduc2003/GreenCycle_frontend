@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import '../../data/repositories/yard_repository.dart';
 import '../../../../features/transaction/data/models/transaction_dto.dart';
 import '../../../../features/transaction/data/repositories/transaction_repository.dart';
+import 'transaction_complete_screen.dart';
 
-/// Màn hình Chủ Vựa nhập số liệu cân thực tế sau khi quét QR.
-/// Sau khi nhập và gửi, hệ thống trigger pop-up Xác nhận chéo trên máy Người Bán.
 class WeightInputScreen extends StatefulWidget {
   final String token;
   final int orderId;
@@ -28,6 +27,11 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
   final _txRepo = TransactionRepository();
   final _yardRepo = YardRepository();
 
+  // Lưu trữ giá trị gộp và khấu hao tạm thời cho từng item
+  // key = orderDetailId
+  final Map<int, double> _grossWeights = {};
+  final Map<int, double> _deductions = {};
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +46,10 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
       );
       setState(() {
         _details = details;
+        for (var d in _details) {
+          _grossWeights[d.orderDetailId] = 0;
+          _deductions[d.orderDetailId] = 0;
+        }
         _isLoading = false;
       });
     } catch (e) {
@@ -52,12 +60,25 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
     }
   }
 
+  void _updateWeight(int detailId, double gross, double deduction) {
+    setState(() {
+      _grossWeights[detailId] = gross;
+      _deductions[detailId] = deduction;
+      
+      final netWeight = gross * (1 - deduction / 100);
+      final index = _details.indexWhere((d) => d.orderDetailId == detailId);
+      if (index != -1) {
+        _details[index] = _details[index].copyWith(actualWeight: netWeight);
+      }
+    });
+  }
+
   Future<void> _sendConfirmation() async {
     for (final d in _details) {
       if (d.actualWeight <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Vui lòng nhập khối lượng thực tế cho tất cả loại rác!'),
+            content: Text('Vui lòng nhập khối lượng lớn hơn 0!'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -83,7 +104,15 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
       );
 
       if (mounted) {
-        _showSuccessDialog();
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TransactionCompleteScreen(
+              token: widget.token,
+              orderId: widget.orderId,
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -108,18 +137,18 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
               children: [
                 Icon(Icons.warning_amber_rounded, color: Colors.orange),
                 SizedBox(width: 8),
-                Text('Cảnh báo khối lượng lớn', style: TextStyle(fontSize: 16)),
+                Text('Khối lượng lớn', style: TextStyle(fontSize: 16)),
               ],
             ),
             content: Text(
-              '$name: ${weight.toStringAsFixed(1)} kg vượt giới hạn 30kg.\n\nBạn có chắc số liệu này đúng không?',
+              '$name: ${weight.toStringAsFixed(1)} kg.\nBạn có chắc số liệu này đúng?',
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Nhập lại')),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Xác nhận vẫn đúng', style: TextStyle(color: Colors.white)),
+                child: const Text('Đã kiểm tra', style: TextStyle(color: Colors.white)),
               ),
             ],
           ),
@@ -127,48 +156,11 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
         false;
   }
 
-  void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle_rounded, size: 64, color: Color(0xFF1B8E5A)),
-            SizedBox(height: 16),
-            Text(
-              'Đã gửi xác nhận!',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Đang chờ khách hàng xác nhận trên ứng dụng của họ...',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF7A8B80)),
-            ),
-          ],
-        ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1B8E5A),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-              onPressed: () {
-                Navigator.pop(context); // close dialog
-                Navigator.pop(context); // go back to dashboard
-              },
-              child: const Text('Quay về Trang chủ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ],
-      ),
-    );
+  String _formatNumber(num value) {
+    return value.toStringAsFixed(0).replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]}.',
+        );
   }
 
   @override
@@ -187,11 +179,11 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
           children: [
             const Text(
               'Nhập số liệu thực tế',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
             ),
             Text(
               'Đơn #${widget.orderId}',
-              style: const TextStyle(fontSize: 12, color: Color(0xFF7A8B80)),
+              style: const TextStyle(fontSize: 13, color: Color(0xFF7A8B80)),
             ),
           ],
         ),
@@ -207,175 +199,202 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
 
   Widget _buildContent() {
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       children: [
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F5E9),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF1B8E5A).withOpacity(0.3)),
+            color: const Color(0xFFE59835).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE59835).withOpacity(0.3)),
           ),
           child: const Row(
             children: [
-              Icon(Icons.info_outline_rounded, color: Color(0xFF1B8E5A), size: 18),
+              Icon(Icons.lock_outline, color: Color(0xFFC78330), size: 20),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Nhập khối lượng thực tế sau khi cân. Hệ thống sẽ gửi thông báo xác nhận cho khách hàng.',
-                  style: TextStyle(fontSize: 12.5, color: Color(0xFF2E7D32)),
+                  'Đơn giá được áp dụng chính sách Price Freeze. Bạn chỉ cần nhập khối lượng và tỷ lệ khấu hao.',
+                  style: TextStyle(fontSize: 13, color: Color(0xFFC78330), height: 1.4),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 20),
-        ..._details.asMap().entries.map((entry) => _buildWeightInputCard(entry.key, entry.value)),
+        const SizedBox(height: 16),
+        ..._details.map((d) => _buildWeightInputCard(d)),
       ],
     );
   }
 
-  Widget _buildWeightInputCard(int index, OrderDetailItem detail) {
+  Widget _buildWeightInputCard(OrderDetailItem detail) {
+    final id = detail.orderDetailId;
+    final gross = _grossWeights[id] ?? 0;
+    final deduction = _deductions[id] ?? 0;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 3)),
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE0F4EB),
-                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFF1B8E5A).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.category_outlined, size: 18, color: Color(0xFF1B8E5A)),
+                child: const Icon(Icons.category_outlined, size: 24, color: Color(0xFF1B8E5A)),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(detail.categoryName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1A2E22))),
+                    Text(detail.categoryName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1A2E22))),
+                    const SizedBox(height: 2),
                     Text('Ước tính: ${detail.estimatedWeight} ${detail.unit}',
                         style: const TextStyle(fontSize: 12, color: Color(0xFF7A8B80))),
                   ],
                 ),
               ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('${_formatNumber(detail.unitPrice)} đ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFC78330))),
+                  const Text('Khóa giá', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 14),
-          const Text('Khối lượng thực tế', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF7A8B80))),
-          const SizedBox(height: 8),
+          const Divider(height: 24, color: Color(0xFFF3F7F4), thickness: 1.5),
+          
+          // Inputs
           Row(
             children: [
-              _buildAdjustBtn(
-                icon: Icons.remove_rounded,
-                onTap: () {
-                  setState(() {
-                    if (_details[index].actualWeight > 0) {
-                      _details[index] = _details[index].copyWith(
-                        actualWeight: (_details[index].actualWeight - 0.5).clamp(0, 9999),
-                      );
-                    }
-                  });
-                },
-              ),
               Expanded(
-                child: GestureDetector(
-                  onTap: () => _showWeightDialog(index),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3F7F4),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: detail.actualWeight > 0
-                          ? const Color(0xFF1B8E5A).withOpacity(0.4)
-                          : const Color(0xFFDDE4E0)),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${detail.actualWeight.toStringAsFixed(1)} ${detail.unit}',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: detail.actualWeight > 0 ? const Color(0xFF1B8E5A) : const Color(0xFFB0BEC5),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Tổng gộp (kg)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF7A8B80))),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: () => _showInputDialog(id, 'Tổng gộp', gross, (val) => _updateWeight(id, val, deduction)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F7F4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFDDE4E0)),
+                        ),
+                        child: Text(
+                          gross > 0 ? gross.toStringAsFixed(1) : 'Nhập...',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: gross > 0 ? const Color(0xFF1A2E22) : const Color(0xFFB0BEC5),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-              _buildAdjustBtn(
-                icon: Icons.add_rounded,
-                onTap: () {
-                  setState(() {
-                    _details[index] = _details[index].copyWith(
-                      actualWeight: _details[index].actualWeight + 0.5,
-                    );
-                  });
-                },
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Khấu hao (%)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF7A8B80))),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: () => _showInputDialog(id, 'Khấu hao %', deduction, (val) => _updateWeight(id, gross, val)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F7F4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFDDE4E0)),
+                        ),
+                        child: Text(
+                          deduction > 0 ? '${deduction.toStringAsFixed(0)}%' : '0%',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: deduction > 0 ? const Color(0xFF1A2E22) : const Color(0xFFB0BEC5),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
+          ),
+          
+          const SizedBox(height: 16),
+          // Actual Weight Result
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1B8E5A).withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Thực nhận:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B8E5A))),
+                Text(
+                  '${detail.actualWeight.toStringAsFixed(1)} ${detail.unit}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1B8E5A)),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAdjustBtn({required IconData icon, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        margin: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1B8E5A),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [BoxShadow(color: const Color(0xFF1B8E5A).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 3))],
-        ),
-        child: Icon(icon, color: Colors.white, size: 22),
-      ),
-    );
-  }
-
-  Future<void> _showWeightDialog(int index) async {
+  Future<void> _showInputDialog(int id, String title, double current, Function(double) onSaved) async {
     final controller = TextEditingController(
-      text: _details[index].actualWeight > 0 ? _details[index].actualWeight.toStringAsFixed(1) : '',
+      text: current > 0 ? (title.contains('%') ? current.toStringAsFixed(0) : current.toStringAsFixed(1)) : '',
     );
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Nhập cân nặng (${_details[index].unit})'),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
         content: TextField(
           controller: controller,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Ví dụ: 15.5',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            hintText: 'Nhập số liệu',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Hủy')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Hủy', style: TextStyle(color: Colors.grey))),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1B8E5A)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1B8E5A),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             onPressed: () {
               final val = double.tryParse(controller.text);
               if (val != null && val >= 0) {
-                setState(() {
-                  _details[index] = _details[index].copyWith(actualWeight: val);
-                });
+                onSaved(val);
               }
               Navigator.pop(context);
             },
@@ -393,21 +412,22 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
         child: ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1B8E5A),
+            backgroundColor: const Color(0xFFC78330),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            minimumSize: const Size(double.infinity, 56),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            elevation: 8,
+            shadowColor: const Color(0xFFC78330).withOpacity(0.5),
           ),
           onPressed: _isSending ? null : _sendConfirmation,
           child: _isSending
               ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
                 )
               : const Text(
-                  'Gửi xác nhận cho khách hàng →',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                  'GỬI XÁC NHẬN GIAO DỊCH',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 0.5),
                 ),
         ),
       ),
@@ -415,14 +435,12 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data model
-// ─────────────────────────────────────────────────────────────────────────────
 class OrderDetailItem {
   final int orderDetailId;
   final String categoryName;
   final String unit;
   final double estimatedWeight;
+  final double unitPrice;
   double actualWeight;
 
   OrderDetailItem({
@@ -430,6 +448,7 @@ class OrderDetailItem {
     required this.categoryName,
     required this.unit,
     required this.estimatedWeight,
+    required this.unitPrice,
     this.actualWeight = 0,
   });
 
@@ -439,6 +458,7 @@ class OrderDetailItem {
       categoryName: categoryName,
       unit: unit,
       estimatedWeight: estimatedWeight,
+      unitPrice: unitPrice,
       actualWeight: actualWeight ?? this.actualWeight,
     );
   }

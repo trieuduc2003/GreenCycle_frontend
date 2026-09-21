@@ -129,6 +129,18 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             child: Column(
               children: [
                 Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFC78330), // Orange badge
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Sẵn sàng',
+                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   decoration: BoxDecoration(
                     color: Colors.black54,
@@ -139,6 +151,22 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     style: TextStyle(color: Colors.white, fontSize: 14),
                     textAlign: TextAlign.center,
                   ),
+                ),
+                const SizedBox(height: 24),
+                // Nút Nhập tay
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFFC78330),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                  icon: const Icon(Icons.keyboard_alt_outlined, size: 20),
+                  label: const Text(
+                    'Nhập mã thủ công',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: _showManualEntryDialog,
                 ),
               ],
             ),
@@ -153,6 +181,72 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       painter: _ScannerOverlayPainter(),
       child: const SizedBox.expand(),
     );
+  }
+
+  Future<void> _showManualEntryDialog() async {
+    _controller.stop();
+    final textController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Nhập mã đơn hàng', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        content: TextField(
+          controller: textController,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Ví dụ: 123',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFC78330), width: 2),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Hủy', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFC78330),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              final id = int.tryParse(textController.text.trim());
+              Navigator.pop(context); // Đóng dialog
+              if (id != null && id > 0) {
+                // Điều hướng sang WeightInputScreen
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => WeightInputScreen(
+                      token: widget.token,
+                      orderId: id,
+                    ),
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Mã đơn hàng không hợp lệ!'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Xác nhận', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    // Restart camera after dialog is closed if didn't navigate
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      _controller.start();
+    }
   }
 }
 
@@ -173,21 +267,21 @@ class _ScannerOverlayPainter extends CustomPainter {
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(path, paint);
 
-    // Vẽ viền xanh cho khung quét
+    // Vẽ viền cam cho khung quét
     final borderPaint = Paint()
-      ..color = const Color(0xFF1B8E5A)
+      ..color = const Color(0xFFC78330).withOpacity(0.5)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
+      ..strokeWidth = 2;
     canvas.drawRRect(
       RRect.fromRectAndRadius(scanRect, const Radius.circular(16)),
       borderPaint,
     );
 
     // Vẽ góc quét nổi bật
-    const cornerLen = 24.0;
-    const cornerWidth = 5.0;
+    const cornerLen = 30.0;
+    const cornerWidth = 6.0;
     final cornerPaint = Paint()
-      ..color = const Color(0xFF43A047)
+      ..color = const Color(0xFFE59835) // Sáng hơn xíu
       ..style = PaintingStyle.stroke
       ..strokeWidth = cornerWidth
       ..strokeCap = StrokeCap.round;

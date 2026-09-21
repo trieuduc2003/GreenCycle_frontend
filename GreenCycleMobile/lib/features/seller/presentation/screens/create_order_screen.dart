@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/order_dto.dart';
 import '../../data/repositories/order_repository.dart';
+import '../../data/repositories/user_repository.dart';
+import '../../../yard/presentation/screens/nearby_yards_screen.dart';
 
 /// Màn hình A06: Tạo đơn & khai báo rác (Người bán)
 class CreateOrderScreen extends StatefulWidget {
@@ -20,19 +22,51 @@ class CreateOrderScreen extends StatefulWidget {
 
 class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _orderRepo = OrderRepository();
+  final _userRepo = UserRepository();
   final _quantityController = TextEditingController(text: '15');
 
   // State
   int _selectedMethodId = 1; // 1: Drop-off (Tự mang đi), 2: Pick-up (Gọi thu gom)
   WasteCategoryDto? _selectedCategory;
   List<WasteCategoryDto> _categories = [];
+  List<UserAddressModel> _addresses = [];
+  UserAddressModel? _selectedAddress;
   bool _isLoadingCategories = true;
+  bool _isLoadingAddresses = true;
   bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCategories();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    await Future.wait([
+      _loadCategories(),
+      _loadAddresses(),
+    ]);
+  }
+
+  Future<void> _loadAddresses() async {
+    setState(() => _isLoadingAddresses = true);
+    try {
+      final list = await _userRepo.getAddresses(widget.token);
+      if (mounted) {
+        setState(() {
+          _addresses = list;
+          if (list.isNotEmpty) {
+            _selectedAddress = list.firstWhere(
+              (a) => a.isDefault,
+              orElse: () => list.first,
+            );
+          }
+          _isLoadingAddresses = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingAddresses = false);
+    }
   }
 
   @override
@@ -81,11 +115,22 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return;
     }
 
+    if (_selectedMethodId == 2 && _selectedAddress == null) {
+      _showMessage('Vui lòng chọn địa chỉ nhận hàng!');
+      return;
+    }
+
+    if (_selectedMethodId == 2 && _quantity < 5) {
+      _showMessage('Đơn thu gom tận nơi (Pick-up) yêu cầu khối lượng tối thiểu là 5kg!');
+      return;
+    }
+
     setState(() => _isSubmitting = true);
 
     try {
       final request = CreateOrderRequestDto(
         methodId: _selectedMethodId,
+        pickupAddressId: _selectedMethodId == 2 ? _selectedAddress?.addressId : null,
         details: [
           CreateOrderDetailDto(
             categoryId: _selectedCategory!.categoryId,
@@ -152,8 +197,20 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context); // Đóng Dialog
-                    Navigator.pop(context); // Quay về Home
+                    if (isDropOff) {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => NearbyYardsScreen(
+                            token: widget.token,
+                            orderId: response.orderId,
+                          ),
+                        ),
+                      );
+                    } else {
+                      Navigator.pop(context); // Đóng Dialog
+                      Navigator.pop(context); // Quay về Home
+                    }
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryGreen,
@@ -224,6 +281,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           _buildSectionTitle('Phương thức'),
                           const SizedBox(height: 10),
                           _buildMethodSelection(),
+
+                          if (_selectedMethodId == 2) ...[
+                            const SizedBox(height: 24),
+                            _buildSectionTitle('Địa chỉ thu gom'),
+                            const SizedBox(height: 10),
+                            _buildAddressSelector(),
+                          ],
 
                           const SizedBox(height: 24),
 
@@ -374,6 +438,70 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               ),
             ),
           ],
+      ),
+    )
+    );
+  }
+
+  Widget _buildAddressSelector() {
+    if (_isLoadingAddresses) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16.0),
+          child: CircularProgressIndicator(color: AppColors.primaryGreen),
+        ),
+      );
+    }
+    if (_addresses.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.red.withOpacity(0.5)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.red),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Chưa có địa chỉ nào. Vui lòng thêm địa chỉ ở phần Tài khoản.',
+                style: TextStyle(color: Colors.red, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8E4)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<UserAddressModel>(
+          isExpanded: true,
+          value: _selectedAddress,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.primaryGreen),
+          items: _addresses.map((address) {
+            return DropdownMenuItem(
+              value: address,
+              child: Text(
+                address.addressLabel != null && address.addressLabel!.isNotEmpty
+                    ? '${address.addressLabel} - ${address.fullAddress}'
+                    : address.fullAddress,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF1A2E22)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList(),
+          onChanged: (val) {
+            if (val != null) setState(() => _selectedAddress = val);
+          },
         ),
       ),
     );

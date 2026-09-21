@@ -31,6 +31,29 @@ class WalletRepository {
     }
   }
 
+  /// Nạp tiền vào ví
+  Future<bool> depositWallet(String token, double amount) async {
+    try {
+      final response = await http.post(
+        Uri.parse(ApiEndpoints.walletDeposit),
+        headers: {
+          ..._baseHeaders,
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'amount': amount}),
+      );
+
+      if (response.statusCode == 200) {
+        return true;
+      } else {
+        throw Exception(_parseError(response, 'Không thể nạp tiền'));
+      }
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Lỗi kết nối máy chủ: $e');
+    }
+  }
+
   // Helper: parse thông báo lỗi từ API
   String _parseError(http.Response response, String fallback) {
     try {
