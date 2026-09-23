@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/order_detail_dto.dart';
 import '../../data/repositories/order_repository.dart';
+import 'live_tracking_screen.dart';
 import 'seller_qr_display_screen.dart';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -94,6 +95,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         const SizedBox(height: 24),
                         if (_order!.statusName.toLowerCase() == 'pending') ...[
                           _buildQrButton(),
+                          const SizedBox(height: 16),
+                        ],
+                        if (_order!.methodId == 2 && 
+                            (_order!.statusName.toLowerCase() == 'driverassigned' || 
+                             _order!.statusName.toLowerCase() == 'inprogress')) ...[
+                          _buildLiveTrackingButton(),
                           const SizedBox(height: 16),
                         ],
                       ],
@@ -470,7 +477,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   // 3. Thẻ Danh sách các loại rác
   Widget _buildItemsCard() {
     final numFmt = NumberFormat('#,###');
-    final isCompleted = _order!.statusName.toLowerCase() == 'completed';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -733,6 +739,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         label: const Text('Mở mã QR cho Bên Mua quét', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryGreen,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLiveTrackingButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => LiveTrackingScreen(
+                token: widget.token,
+                orderId: _order!.orderId,
+                pickupLatitude: _order!.pickupLatitude ?? 0.0,
+                pickupLongitude: _order!.pickupLongitude ?? 0.0,
+              ),
+            ),
+          );
+        },
+        icon: const Icon(Icons.location_on_outlined, size: 22),
+        label: const Text('Theo dõi tài xế', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.blue.shade600,
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),

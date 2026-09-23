@@ -43,4 +43,24 @@ class TransactionRepository {
       throw Exception(data['message'] ?? 'Không thể khởi tạo giao dịch!');
     }
   }
+
+  /// Gọi API để Người Thu Gom (Collector) nhập số liệu thực tế → trigger Xác nhận chéo (Pick-up)
+  Future<void> initiatePickupTransaction({
+    required String token,
+    required InitiateTransactionRequest request,
+  }) async {
+    final uri = Uri.parse(ApiEndpoints.initiatePickupTransaction);
+    final resp = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(request.toJson()),
+    );
+    final data = jsonDecode(resp.body);
+    if (resp.statusCode != 200 || data['success'] != true) {
+      throw Exception(data['message'] ?? 'Không thể khởi tạo giao dịch thu gom!');
+    }
+  }
 }

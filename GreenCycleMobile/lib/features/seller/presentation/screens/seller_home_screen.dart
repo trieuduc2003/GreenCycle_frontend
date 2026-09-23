@@ -61,7 +61,6 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
 
   final _walletRepo = WalletRepository();
   final _yardApiService = YardApiService();
-  final _txRepo = TransactionRepository();
   HubConnection? _hubConnection;
 
   @override

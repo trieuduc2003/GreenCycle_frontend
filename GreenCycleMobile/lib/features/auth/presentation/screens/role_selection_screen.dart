@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../collector/presentation/screens/collector_dashboard_screen.dart';
 import '../../../seller/presentation/screens/seller_home_screen.dart';
 import '../../../yard/presentation/screens/yard_dashboard_screen.dart';
 import 'login_screen.dart';
@@ -141,11 +142,7 @@ class RoleSelectionScreen extends StatelessWidget {
         destination = SellerHomeScreen(token: token, fullName: fullName);
         break;
       case 'Collector':
-        destination = _ComingSoonScreen(
-          role: 'Người thu gom',
-          icon: Icons.local_shipping_rounded,
-          description: 'Tính năng nhận đơn & định tuyến thu gom đang được phát triển.',
-        );
+        destination = CollectorDashboardScreen(token: token, fullName: fullName);
         break;
       case 'YardOwner':
         destination = YardDashboardScreen(token: token, fullName: fullName);
@@ -242,81 +239,6 @@ class _RoleCard extends StatelessWidget {
               child: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 14),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ComingSoonScreen extends StatelessWidget {
-  final String role;
-  final IconData icon;
-  final String description;
-
-  const _ComingSoonScreen({
-    required this.role,
-    required this.icon,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3F7F4),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF1A2E22)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          role,
-          style: const TextStyle(color: Color(0xFF1A2E22), fontWeight: FontWeight.bold),
-        ),
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 64, color: AppColors.primaryGreen),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Sắp ra mắt! 🚀',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1A2E22),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                description,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF7A8B80), fontSize: 14, height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: const Text('Quay lại', style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
         ),
       ),
     );

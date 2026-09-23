@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'weight_input_screen.dart';
+import '../../../collector/presentation/screens/collector_weight_input_screen.dart';
 
-/// Màn hình Camera full-screen để Chủ Vựa quét QR của Người Bán.
-/// Sau khi quét thành công, điều hướng sang WeightInputScreen.
+/// Màn hình Camera full-screen để Chủ Vựa / Người Thu Gom quét QR của Người Bán.
+/// Sau khi quét thành công, điều hướng sang màn hình nhập khối lượng.
 class QrScannerScreen extends StatefulWidget {
   final String token;
+  final bool isCollector;
 
-  const QrScannerScreen({super.key, required this.token});
+  const QrScannerScreen({super.key, required this.token, this.isCollector = false});
 
   @override
   State<QrScannerScreen> createState() => _QrScannerScreenState();
@@ -62,15 +64,27 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       return;
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => WeightInputScreen(
-          token: widget.token,
-          orderId: orderId,
+    if (widget.isCollector) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CollectorWeightInputScreen(
+            token: widget.token,
+            orderId: orderId,
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => WeightInputScreen(
+            token: widget.token,
+            orderId: orderId,
+          ),
+        ),
+      );
+    }
   }
 
   @override

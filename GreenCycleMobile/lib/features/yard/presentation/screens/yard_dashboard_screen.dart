@@ -11,6 +11,8 @@ import 'yard_pickup_orders_screen.dart';
 import 'yard_edit_profile_screen.dart';
 import 'package:green_cycle_mobile/features/seller/data/repositories/wallet_repository.dart';
 import 'package:green_cycle_mobile/features/seller/data/models/wallet_dto.dart';
+import 'package:signalr_netcore/signalr_client.dart';
+import 'package:green_cycle_mobile/core/constants/api_endpoints.dart';
 
 class YardDashboardScreen extends StatefulWidget {
   final String token;
@@ -42,12 +44,14 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
   bool _isLoadingChart = true;
   List<YardChartDataModel> _chartData = [];
   DateTime _statsMonth = DateTime.now();
+  String _statsFilter = 'All'; // 'All', 'Drop-off', 'Pick-up'
   bool _isCheckingProfile = true;
 
   final _walletRepo = WalletRepository();
   bool _isLoadingWallet = true;
   WalletBalanceDto? _wallet;
   String? _walletError;
+  HubConnection? _hubConnection;
 
   @override
   void initState() {
@@ -59,7 +63,69 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.06).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    _initSignalR();
     _fetchData();
+  }
+
+  Future<void> _initSignalR() async {
+    _hubConnection = HubConnectionBuilder()
+        .withUrl(
+          ApiEndpoints.transactionHub,
+          options: HttpConnectionOptions(
+            accessTokenFactory: () async => widget.token,
+          ),
+        )
+        .withAutomaticReconnect()
+        .build();
+
+    _hubConnection?.on('ReceiveTransactionResult', _handleTransactionResult);
+
+    try {
+      await _hubConnection?.start();
+      print('Yard SignalR Connected');
+    } catch (e) {
+      print('Yard SignalR Connect Error: $e');
+    }
+  }
+
+  void _handleTransactionResult(List<Object?>? args) {
+    if (args != null && args.isNotEmpty) {
+      final payloadMap = args.first as Map<String, dynamic>;
+      final isConfirmed = payloadMap['isConfirmed'] as bool? ?? false;
+      final message = payloadMap['message'] as String? ?? 'Khách hàng đã xác nhận giao dịch';
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                Icon(
+                  isConfirmed ? Icons.check_circle : Icons.cancel,
+                  color: isConfirmed ? Colors.green : Colors.red,
+                  size: 28,
+                ),
+                const SizedBox(width: 8),
+                Text(isConfirmed ? 'Giao dịch thành công' : 'Giao dịch bị từ chối', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  if (isConfirmed) {
+                    _fetchData(); // Reload stats and wallet
+                  }
+                },
+                child: const Text('Đóng', style: TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _fetchData() async {
@@ -200,6 +266,7 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _hubConnection?.stop();
     super.dispose();
   }
 
@@ -534,26 +601,66 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     }
     
     final customers = _stats?.totalCustomers.toString() ?? '0';
-    final kg = _stats?.totalKgCollected.toStringAsFixed(1) ?? '0';
+    
+    double rawKg = 0;
+    double rawRevenue = 0;
+    if (_stats != null) {
+      if (_statsFilter == 'All') {
+        rawKg = _stats!.totalKgCollected;
+        rawRevenue = _stats!.totalRevenue;
+      } else if (_statsFilter == 'Drop-off') {
+        rawKg = _stats!.dropOffKg;
+        rawRevenue = _stats!.dropOffRevenue;
+      } else if (_statsFilter == 'Pick-up') {
+        rawKg = _stats!.pickUpKg;
+        rawRevenue = _stats!.pickUpRevenue;
+      }
+    }
+
+    final kg = rawKg.toStringAsFixed(1);
     
     // Format revenue (e.g. 1,200,000 -> 1.2M)
     String revenueStr = '0';
-    final revenue = _stats?.totalRevenue ?? 0;
-    if (revenue >= 1000000) {
-      revenueStr = '${(revenue / 1000000).toStringAsFixed(1)}M';
-    } else if (revenue >= 1000) {
-      revenueStr = '${(revenue / 1000).toStringAsFixed(1)}k';
+    if (rawRevenue >= 1000000) {
+      revenueStr = '${(rawRevenue / 1000000).toStringAsFixed(1)}M';
+    } else if (rawRevenue >= 1000) {
+      revenueStr = '${(rawRevenue / 1000).toStringAsFixed(1)}k';
     } else {
-      revenueStr = revenue.toStringAsFixed(0);
+      revenueStr = rawRevenue.toStringAsFixed(0);
     }
 
-    return Row(
+    return Column(
       children: [
-        Expanded(child: _buildStatCard('Lượt khách', customers, Icons.people_outline_rounded, const Color(0xFF1565C0))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildStatCard('Kg thu hôm nay', kg, Icons.scale_outlined, const Color(0xFF558B2F))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildStatCard('Doanh thu', revenueStr, Icons.payments_outlined, const Color(0xFFD4770A))),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Text('Lọc: ', style: TextStyle(color: Color(0xFF7A8B80), fontSize: 13)),
+            DropdownButton<String>(
+              value: _statsFilter,
+              icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1B8E5A)),
+              underline: const SizedBox(),
+              style: const TextStyle(color: Color(0xFF1B8E5A), fontWeight: FontWeight.bold, fontSize: 13),
+              items: const [
+                DropdownMenuItem(value: 'All', child: Text('Tất cả')),
+                DropdownMenuItem(value: 'Drop-off', child: Text('Mang đến vựa')),
+                DropdownMenuItem(value: 'Pick-up', child: Text('Thu gom tận nơi')),
+              ],
+              onChanged: (val) {
+                if (val != null) setState(() => _statsFilter = val);
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildStatCard('Lượt khách', customers, Icons.people_outline_rounded, const Color(0xFF1565C0))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard('Kg thu hôm nay', kg, Icons.scale_outlined, const Color(0xFF558B2F))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard('Doanh thu', revenueStr, Icons.payments_outlined, const Color(0xFFD4770A))),
+          ],
+        )
       ],
     );
   }
@@ -641,12 +748,16 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
             child: Text('Chưa có giao dịch nào hôm nay', style: TextStyle(color: Color(0xFF7A8B80))),
           ))
         else
-          ..._activities.map((a) => _buildActivityItem(a.customerName, a.wasteDescription, a.pointsAwarded, a.timeAgo)),
+          ..._activities
+              .where((a) => _statsFilter == 'All' || a.orderType == _statsFilter)
+              .map((a) => _buildActivityItem(a.customerName, a.wasteDescription, a.pointsAwarded, a.timeAgo, a.orderType)),
       ],
     );
   }
 
-  Widget _buildActivityItem(String customer, String waste, String points, String time) {
+  Widget _buildActivityItem(String customer, String waste, String points, String time, String type) {
+    final typeIcon = type == 'Drop-off' ? Icons.storefront : Icons.local_shipping;
+    final typeColor = type == 'Drop-off' ? const Color(0xFF1B8E5A) : const Color(0xFFD4770A);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -666,14 +777,24 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
               color: const Color(0xFFE0F4EB),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.receipt_long_rounded, size: 20, color: Color(0xFF1B8E5A)),
+            child: Icon(typeIcon, size: 20, color: typeColor),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(customer, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF1A2E22))),
+                Row(
+                  children: [
+                    Text(customer, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF1A2E22))),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(color: typeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                      child: Text(type == 'Drop-off' ? 'Đem đến' : 'Đi lấy', style: TextStyle(fontSize: 9, color: typeColor, fontWeight: FontWeight.bold)),
+                    )
+                  ],
+                ),
                 Text(waste, style: const TextStyle(fontSize: 12, color: Color(0xFF7A8B80))),
               ],
             ),
@@ -748,6 +869,26 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
                   'Thống kê Doanh thu',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
                 ),
+                DropdownButton<String>(
+                  value: _statsFilter,
+                  icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1B8E5A)),
+                  underline: const SizedBox(),
+                  style: const TextStyle(color: Color(0xFF1B8E5A), fontWeight: FontWeight.bold, fontSize: 13),
+                  items: const [
+                    DropdownMenuItem(value: 'All', child: Text('Tất cả')),
+                    DropdownMenuItem(value: 'Drop-off', child: Text('Đem đến')),
+                    DropdownMenuItem(value: 'Pick-up', child: Text('Đi lấy')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setState(() => _statsFilter = val);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
                 Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -787,7 +928,12 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: dataReversed.map((d) {
-                    final double heightRatio = maxRev > 0 ? (d.totalRevenue / maxRev) : 0;
+                    double revenue = 0;
+                    if (_statsFilter == 'All') revenue = d.totalRevenue;
+                    else if (_statsFilter == 'Drop-off') revenue = d.dropOffRevenue;
+                    else if (_statsFilter == 'Pick-up') revenue = d.pickUpRevenue;
+                    
+                    final double heightRatio = maxRev > 0 ? (revenue / maxRev) : 0;
                     final double barHeight = heightRatio * 160;
 
                     return Container(
@@ -797,7 +943,7 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           Text(
-                            d.totalRevenue >= 1000 ? '${(d.totalRevenue / 1000).toStringAsFixed(0)}k' : d.totalRevenue.toStringAsFixed(0),
+                            revenue >= 1000 ? '${(revenue / 1000).toStringAsFixed(0)}k' : revenue.toStringAsFixed(0),
                             style: const TextStyle(fontSize: 10, color: Color(0xFF2E7D32), fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
@@ -825,22 +971,29 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
             ),
             const SizedBox(height: 16),
-            ...dataReversed.map((d) => Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Ngày ${d.date}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1A2E22))),
-                  Text('${d.totalKg.toStringAsFixed(1)} kg', style: const TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
-                ],
-              ),
-            )),
+            ...dataReversed.map((d) {
+              double kg = 0;
+              if (_statsFilter == 'All') kg = d.totalKg;
+              else if (_statsFilter == 'Drop-off') kg = d.dropOffKg;
+              else if (_statsFilter == 'Pick-up') kg = d.pickUpKg;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Ngày ${d.date}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1A2E22))),
+                    Text('${kg.toStringAsFixed(1)} kg', style: const TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            }),
           ],
         ),
       ),

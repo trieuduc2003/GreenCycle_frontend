@@ -30,3 +30,35 @@ class WalletBalanceDto {
     );
   }
 }
+
+// ─── Wallet Transaction Response ──────────────────────────────────────────
+class WalletTransactionDto {
+  final int transactionId;
+  final double amount;
+  final String transactionType;
+  final String description;
+  final DateTime? createdAt;
+  final int? referenceOrderId;
+
+  WalletTransactionDto({
+    required this.transactionId,
+    required this.amount,
+    required this.transactionType,
+    required this.description,
+    this.createdAt,
+    this.referenceOrderId,
+  });
+
+  factory WalletTransactionDto.fromJson(Map<String, dynamic> json) {
+    return WalletTransactionDto(
+      transactionId: json['transactionId'] ?? 0,
+      amount: (json['amount'] ?? 0).toDouble(),
+      transactionType: json['transactionType'] ?? '',
+      description: json['description'] ?? '',
+      createdAt: json['createdAt'] != null
+          ? DateTime.tryParse(json['createdAt'])
+          : null,
+      referenceOrderId: json['referenceOrderId'],
+    );
+  }
+}

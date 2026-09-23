@@ -17,6 +17,8 @@ class OrderDetailViewDto {
   final String? scrapYardName;
   final String? scrapYardAddress;
   final String? pickupAddress;
+  final double? pickupLatitude;
+  final double? pickupLongitude;
   final String? collectorName;
   final String? collectorPhone;
   final String? collectorVehicleType;
@@ -43,6 +45,8 @@ class OrderDetailViewDto {
     this.scrapYardName,
     this.scrapYardAddress,
     this.pickupAddress,
+    this.pickupLatitude,
+    this.pickupLongitude,
     this.collectorName,
     this.collectorPhone,
     this.collectorVehicleType,
@@ -73,6 +77,8 @@ class OrderDetailViewDto {
       scrapYardName: json['scrapYardName'],
       scrapYardAddress: json['scrapYardAddress'],
       pickupAddress: json['pickupAddress'],
+      pickupLatitude: (json['pickupLatitude'] as num?)?.toDouble(),
+      pickupLongitude: (json['pickupLongitude'] as num?)?.toDouble(),
       collectorName: json['collectorName'],
       collectorPhone: json['collectorPhone'],
       collectorVehicleType: json['collectorVehicleType'],

@@ -28,6 +28,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Tắt Impeller (engine render mới của Flutter) vì nó gây lỗi kẹt màn hình trên một số máy ảo -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
 
     <!-- Quyền truy cập Internet (gọi API) -->

@@ -15,6 +15,7 @@ class _YardWalletScreenState extends State<YardWalletScreen> {
   final _walletRepo = WalletRepository();
   bool _isLoading = false;
   WalletBalanceDto? _balance;
+  List<WalletTransactionDto> _transactions = [];
   final _amountController = TextEditingController();
 
   @override
@@ -33,14 +34,11 @@ class _YardWalletScreenState extends State<YardWalletScreen> {
     setState(() => _isLoading = true);
     try {
       final balance = await _walletRepo.getBalance(widget.token);
-      // Giả sử ví cung cấp lịch sử giao dịch (trong thực tế có thể gọi repo riêng cho transaction)
-      // Tại đây giả lập hoặc lấy rỗng nếu api getBalance không trả về mảng transaction.
-      // Dựa vào WalletRepository hiện tại chỉ có getBalance, chưa có getTransactions.
-      // Ồ, tôi đã thấy WalletController có getTransactions, nhưng WalletRepository chưa gọi.
-      // Để đơn giản, chỉ hiển thị số dư và form nạp tiền.
+      final transactions = await _walletRepo.getTransactions(widget.token);
       
       setState(() {
         _balance = balance;
+        _transactions = transactions;
       });
     } catch (e) {
       if (mounted) {
@@ -205,9 +203,58 @@ class _YardWalletScreenState extends State<YardWalletScreen> {
                   ),
                   const SizedBox(height: 32),
                   const Text(
-                    'Lịch sử giao dịch (đang phát triển)',
+                    'Lịch sử giao dịch',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
                   ),
+                  const SizedBox(height: 16),
+                  if (_transactions.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(32.0),
+                      child: Center(
+                        child: Text(
+                          'Chưa có giao dịch nào',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._transactions.map((tx) {
+                      final isPositive = tx.amount > 0;
+                      final amountColor = isPositive ? const Color(0xFF2E7D32) : Colors.red;
+                      final amountPrefix = isPositive ? '+' : '';
+                      final dateStr = tx.createdAt != null
+                          ? DateFormat('dd/MM/yyyy HH:mm').format(tx.createdAt!.toLocal())
+                          : '';
+
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 1,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: CircleAvatar(
+                            backgroundColor: amountColor.withOpacity(0.1),
+                            child: Icon(
+                              isPositive ? Icons.arrow_downward : Icons.arrow_upward,
+                              color: amountColor,
+                            ),
+                          ),
+                          title: Text(
+                            tx.description,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          subtitle: Text(dateStr, style: const TextStyle(fontSize: 12)),
+                          trailing: Text(
+                            '$amountPrefix${NumberFormat('#,###').format(tx.amount)}',
+                            style: TextStyle(
+                              color: amountColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
                 ],
               ),
             ),

@@ -9,6 +9,7 @@ import 'register_screen.dart';
 import 'role_selection_screen.dart';
 import '../../../seller/presentation/screens/seller_home_screen.dart';
 import '../../../yard/presentation/screens/yard_dashboard_screen.dart';
+import '../../../collector/presentation/screens/collector_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -130,6 +131,8 @@ class _LoginScreenState extends State<LoginScreen> {
         destination = YardDashboardScreen(token: response.token, fullName: response.fullName);
         break;
       case 'Collector':
+        destination = CollectorDashboardScreen(token: response.token, fullName: response.fullName);
+        break;
       default:
         destination = RoleSelectionScreen(token: response.token, fullName: response.fullName);
         break;
