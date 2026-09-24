@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'qr_scanner_screen.dart';
+import '../../data/repositories/yard_repository.dart';
+import '../../data/models/yard_stats_model.dart';
+import '../../data/models/yard_activity_model.dart';
+import '../../data/models/yard_chart_data_model.dart';
+import 'yard_profile_screen.dart';
+import 'yard_price_list_screen.dart';
+import 'yard_pickup_orders_screen.dart';
+import 'yard_edit_profile_screen.dart';
+import 'package:green_cycle_mobile/features/seller/data/repositories/wallet_repository.dart';
+import 'package:green_cycle_mobile/features/seller/data/models/wallet_dto.dart';
+import 'package:signalr_netcore/signalr_client.dart';
+import 'package:green_cycle_mobile/core/constants/api_endpoints.dart';
 
-/// Màn hình chính cho Chủ Vựa (Role C) — giống POS thu ngân.
-/// Tính năng: Hiển thị trạng thái Mở/Đóng cửa, nút Quét QR Khách to ở giữa,
-/// thống kê nhanh trong ngày.
 class YardDashboardScreen extends StatefulWidget {
   final String token;
   final String fullName;
@@ -27,6 +36,23 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
 
+  final _yardRepo = YardRepository();
+  bool _isLoadingStats = true;
+  bool _isLoadingActivities = true;
+  YardStatsModel? _stats;
+  List<YardActivityModel> _activities = [];
+  bool _isLoadingChart = true;
+  List<YardChartDataModel> _chartData = [];
+  DateTime _statsMonth = DateTime.now();
+  String _statsFilter = 'All'; // 'All', 'Drop-off', 'Pick-up'
+  bool _isCheckingProfile = true;
+
+  final _walletRepo = WalletRepository();
+  bool _isLoadingWallet = true;
+  WalletBalanceDto? _wallet;
+  String? _walletError;
+  HubConnection? _hubConnection;
+
   @override
   void initState() {
     super.initState();
@@ -37,11 +63,210 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     _pulseAnim = Tween<double>(begin: 1.0, end: 1.06).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    _initSignalR();
+    _fetchData();
+  }
+
+  Future<void> _initSignalR() async {
+    _hubConnection = HubConnectionBuilder()
+        .withUrl(
+          ApiEndpoints.transactionHub,
+          options: HttpConnectionOptions(
+            accessTokenFactory: () async => widget.token,
+          ),
+        )
+        .withAutomaticReconnect()
+        .build();
+
+    _hubConnection?.on('ReceiveTransactionResult', _handleTransactionResult);
+
+    try {
+      await _hubConnection?.start();
+      print('Yard SignalR Connected');
+    } catch (e) {
+      print('Yard SignalR Connect Error: $e');
+    }
+  }
+
+  void _handleTransactionResult(List<Object?>? args) {
+    if (args != null && args.isNotEmpty) {
+      final payloadMap = args.first as Map<String, dynamic>;
+      final isConfirmed = payloadMap['isConfirmed'] as bool? ?? false;
+      final message = payloadMap['message'] as String? ?? 'Khách hàng đã xác nhận giao dịch';
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                Icon(
+                  isConfirmed ? Icons.check_circle : Icons.cancel,
+                  color: isConfirmed ? Colors.green : Colors.red,
+                  size: 28,
+                ),
+                const SizedBox(width: 8),
+                Text(isConfirmed ? 'Giao dịch thành công' : 'Giao dịch bị từ chối', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  if (isConfirmed) {
+                    _fetchData(); // Reload stats and wallet
+                  }
+                },
+                child: const Text('Đóng', style: TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _fetchData() async {
+    await _checkProfile();
+    if (mounted && !_isCheckingProfile) {
+      _fetchStats();
+      _fetchActivities();
+      _fetchChart();
+      _fetchWallet();
+    }
+  }
+
+  Future<void> _checkProfile() async {
+    try {
+      final profile = await _yardRepo.getProfile(token: widget.token);
+      final address = profile['address'] as String?;
+      final lat = profile['latitude'];
+      final lng = profile['longitude'];
+      
+      if (address == null || address.trim().isEmpty || address == 'Chưa cập nhật' || lat == null || lng == null) {
+        if (mounted) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => YardEditProfileScreen(
+                token: widget.token,
+                isInitialSetup: true,
+              ),
+            ),
+          );
+        }
+      } else {
+        setState(() {
+          _isOpen = profile['isOpening'] ?? true;
+        });
+      }
+    } catch (e) {
+      // Ignore if failed to load
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingProfile = false);
+      }
+    }
+  }
+
+  Future<void> _fetchWallet() async {
+    setState(() {
+      _isLoadingWallet = true;
+      _walletError = null;
+    });
+    try {
+      final wallet = await _walletRepo.getBalance(widget.token);
+      if (mounted) {
+        setState(() {
+          _wallet = wallet;
+          _isLoadingWallet = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _walletError = e.toString().replaceAll('Exception: ', '');
+          _isLoadingWallet = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchChart() async {
+    setState(() => _isLoadingChart = true);
+    try {
+      final data = await _yardRepo.getChartStats(
+        token: widget.token, 
+        month: _statsMonth.month, 
+        year: _statsMonth.year
+      );
+      if (mounted) {
+        setState(() {
+          _chartData = data;
+          _isLoadingChart = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingChart = false);
+    }
+  }
+
+  void _changeStatsMonth(int offsetMonths) {
+    setState(() {
+      _statsMonth = DateTime(_statsMonth.year, _statsMonth.month + offsetMonths, 1);
+    });
+    _fetchChart();
+  }
+
+  Future<void> _fetchStats() async {
+    try {
+      final stats = await _yardRepo.getStats(token: widget.token);
+      if (mounted) {
+        setState(() {
+          _stats = stats;
+          _isLoadingStats = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingStats = false);
+    }
+  }
+
+  Future<void> _fetchActivities() async {
+    try {
+      final activities = await _yardRepo.getRecentActivities(token: widget.token);
+      if (mounted) {
+        setState(() {
+          _activities = activities;
+          _isLoadingActivities = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingActivities = false);
+    }
+  }
+
+  Future<void> _toggleStatus(bool val) async {
+    final oldState = _isOpen;
+    setState(() => _isOpen = val);
+    try {
+      await _yardRepo.updateStatus(token: widget.token, isOpening: val);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isOpen = oldState);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', '')), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
+    _hubConnection?.stop();
     super.dispose();
   }
 
@@ -52,11 +277,37 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
       statusBarIconBrightness: Brightness.dark,
     ));
 
+    if (_isCheckingProfile) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF3F7F4),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              CircularProgressIndicator(color: Color(0xFF1B8E5A)),
+              SizedBox(height: 16),
+              Text('Đang kiểm tra hồ sơ...', style: TextStyle(color: Color(0xFF7A8B80))),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF3F7F4),
-      body: _selectedTab == 0 ? _buildHomeTab() : _buildStatsTab(),
+      body: _buildBody(),
       bottomNavigationBar: _buildBottomNav(),
     );
+  }
+
+  Widget _buildBody() {
+    switch (_selectedTab) {
+      case 0: return _buildHomeTab();
+      case 1: return YardPriceListScreen(token: widget.token);
+      case 2: return _buildStatsTab();
+      case 3: return YardProfileScreen(token: widget.token, fullName: widget.fullName);
+      default: return _buildHomeTab();
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -72,11 +323,19 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
             _buildHeader(),
             const SizedBox(height: 20),
             _buildStatusCard(),
+            const SizedBox(height: 20),
+            _buildWalletCard(),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(child: _buildScanButton()),
+                const SizedBox(width: 12),
+                Expanded(child: _buildPickUpButton()),
+              ],
+            ),
             const SizedBox(height: 24),
             _buildQuickStats(),
-            const SizedBox(height: 32),
-            _buildScanButton(),
-            const SizedBox(height: 20),
+            const SizedBox(height: 10),
             _buildRecentActivity(),
           ],
         ),
@@ -111,29 +370,6 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
               ],
             ),
           ],
-        ),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1B5E20).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF2E7D32).withOpacity(0.3)),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.verified_user_outlined, size: 14, color: Color(0xFF2E7D32)),
-              SizedBox(width: 4),
-              Text(
-                'Chủ Vựa',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF2E7D32),
-                ),
-              ),
-            ],
-          ),
         ),
       ],
     );
@@ -190,7 +426,7 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
           const Spacer(),
           Switch.adaptive(
             value: _isOpen,
-            onChanged: (val) => setState(() => _isOpen = val),
+            onChanged: _toggleStatus,
             activeColor: Colors.white,
             activeTrackColor: Colors.white30,
             inactiveThumbColor: Colors.white,
@@ -201,14 +437,230 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     );
   }
 
+  String _formatNumber(num value) {
+    return value.toStringAsFixed(0).replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]}.',
+        );
+  }
+
+  Widget _buildWalletCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFC78330), // Orange-ish matching the UI
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFC78330).withOpacity(0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Ví Trả Trước',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Icon(Icons.account_balance_wallet_outlined, color: Colors.white),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isLoadingWallet)
+            const CircularProgressIndicator(color: Colors.white)
+          else if (_walletError != null)
+            Text('Lỗi: $_walletError', style: const TextStyle(color: Colors.white))
+          else
+            Text(
+              '${_formatNumber(_wallet?.balanceInVnd ?? 0)}đ',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'Trên mức tối thiểu 50k',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanButton() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => QrScannerScreen(token: widget.token),
+          ),
+        );
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE59835),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFE59835).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.qr_code_scanner, color: Colors.white, size: 28),
+            SizedBox(height: 8),
+            Text(
+              'Quét nhận hàng',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPickUpButton() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => YardPickupOrdersScreen(token: widget.token),
+          ),
+        );
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1B8E5A),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1B8E5A).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.local_shipping_outlined, color: Colors.white, size: 28),
+            SizedBox(height: 8),
+            Text(
+              'Đơn chờ đi lấy',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildQuickStats() {
-    return Row(
+    if (_isLoadingStats) {
+      return const Center(child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: CircularProgressIndicator(color: Color(0xFF1B8E5A)),
+      ));
+    }
+    
+    final customers = _stats?.totalCustomers.toString() ?? '0';
+    
+    double rawKg = 0;
+    double rawRevenue = 0;
+    if (_stats != null) {
+      if (_statsFilter == 'All') {
+        rawKg = _stats!.totalKgCollected;
+        rawRevenue = _stats!.totalRevenue;
+      } else if (_statsFilter == 'Drop-off') {
+        rawKg = _stats!.dropOffKg;
+        rawRevenue = _stats!.dropOffRevenue;
+      } else if (_statsFilter == 'Pick-up') {
+        rawKg = _stats!.pickUpKg;
+        rawRevenue = _stats!.pickUpRevenue;
+      }
+    }
+
+    final kg = rawKg.toStringAsFixed(1);
+    
+    // Format revenue (e.g. 1,200,000 -> 1.2M)
+    String revenueStr = '0';
+    if (rawRevenue >= 1000000) {
+      revenueStr = '${(rawRevenue / 1000000).toStringAsFixed(1)}M';
+    } else if (rawRevenue >= 1000) {
+      revenueStr = '${(rawRevenue / 1000).toStringAsFixed(1)}k';
+    } else {
+      revenueStr = rawRevenue.toStringAsFixed(0);
+    }
+
+    return Column(
       children: [
-        Expanded(child: _buildStatCard('Lượt khách', '12', Icons.people_outline_rounded, const Color(0xFF1565C0))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildStatCard('Kg thu hôm nay', '87.5', Icons.scale_outlined, const Color(0xFF558B2F))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildStatCard('Doanh thu', '1.2M', Icons.payments_outlined, const Color(0xFFD4770A))),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Text('Lọc: ', style: TextStyle(color: Color(0xFF7A8B80), fontSize: 13)),
+            DropdownButton<String>(
+              value: _statsFilter,
+              icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1B8E5A)),
+              underline: const SizedBox(),
+              style: const TextStyle(color: Color(0xFF1B8E5A), fontWeight: FontWeight.bold, fontSize: 13),
+              items: const [
+                DropdownMenuItem(value: 'All', child: Text('Tất cả')),
+                DropdownMenuItem(value: 'Drop-off', child: Text('Mang đến vựa')),
+                DropdownMenuItem(value: 'Pick-up', child: Text('Thu gom tận nơi')),
+              ],
+              onChanged: (val) {
+                if (val != null) setState(() => _statsFilter = val);
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildStatCard('Lượt khách', customers, Icons.people_outline_rounded, const Color(0xFF1565C0))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard('Kg thu hôm nay', kg, Icons.scale_outlined, const Color(0xFF558B2F))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildStatCard('Doanh thu', revenueStr, Icons.payments_outlined, const Color(0xFFD4770A))),
+          ],
+        )
       ],
     );
   }
@@ -257,118 +709,55 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     );
   }
 
-  Widget _buildScanButton() {
-    return Column(
-      children: [
-        const Text(
-          'Quét mã khách hàng',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1A2E22),
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Nhấn nút bên dưới để quét QR và nhập số liệu',
-          style: TextStyle(fontSize: 13, color: Color(0xFF7A8B80)),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 20),
-        ScaleTransition(
-          scale: _pulseAnim,
-          child: GestureDetector(
-            onTap: _isOpen
-                ? () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => QrScannerScreen(token: widget.token),
-                      ),
-                    );
-                  }
-                : () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Hãy mở cửa vựa trước khi quét QR!'),
-                        backgroundColor: Color(0xFF546E7A),
-                      ),
-                    );
-                  },
-            child: Container(
-              width: 160,
-              height: 160,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: _isOpen
-                      ? [const Color(0xFF1B8E5A), const Color(0xFF43A047)]
-                      : [const Color(0xFF78909C), const Color(0xFF546E7A)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: (_isOpen
-                            ? const Color(0xFF1B8E5A)
-                            : const Color(0xFF546E7A))
-                        .withOpacity(0.4),
-                    blurRadius: 24,
-                    spreadRadius: 4,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.qr_code_scanner_rounded, size: 52, color: Colors.white),
-                  SizedBox(height: 8),
-                  Text(
-                    'QUÉT QR\nKHÁCH',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _buildRecentActivity() {
-    final activities = [
-      ('Khách #1042', '15 kg Giấy', '30.000 GP', '09:45'),
-      ('Khách #1041', '3 Rác điện tử', '15.000 GP', '08:30'),
-      ('Khách #1040', '8 kg Nhựa', '24.000 GP', 'Hôm qua'),
-    ];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Hoạt động gần đây',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1A2E22),
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Hoạt động gần đây',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1A2E22),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF7A8B80)),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () {
+                setState(() => _isLoadingActivities = true);
+                _fetchActivities();
+              },
+            ),
+          ],
         ),
         const SizedBox(height: 12),
-        ...activities.map((a) => _buildActivityItem(a.$1, a.$2, a.$3, a.$4)),
+        if (_isLoadingActivities)
+          const Center(child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: CircularProgressIndicator(color: Color(0xFF1B8E5A)),
+          ))
+        else if (_activities.isEmpty)
+          const Center(child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Text('Chưa có giao dịch nào hôm nay', style: TextStyle(color: Color(0xFF7A8B80))),
+          ))
+        else
+          ..._activities
+              .where((a) => _statsFilter == 'All' || a.orderType == _statsFilter)
+              .map((a) => _buildActivityItem(a.customerName, a.wasteDescription, a.pointsAwarded, a.timeAgo, a.orderType)),
       ],
     );
   }
 
-  Widget _buildActivityItem(String customer, String waste, String points, String time) {
+  Widget _buildActivityItem(String customer, String waste, String points, String time, String type) {
+    final typeIcon = type == 'Drop-off' ? Icons.storefront : Icons.local_shipping;
+    final typeColor = type == 'Drop-off' ? const Color(0xFF1B8E5A) : const Color(0xFFD4770A);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -388,14 +777,24 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
               color: const Color(0xFFE0F4EB),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.receipt_long_rounded, size: 20, color: Color(0xFF1B8E5A)),
+            child: Icon(typeIcon, size: 20, color: typeColor),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(customer, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF1A2E22))),
+                Row(
+                  children: [
+                    Text(customer, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF1A2E22))),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(color: typeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                      child: Text(type == 'Drop-off' ? 'Đem đến' : 'Đi lấy', style: TextStyle(fontSize: 9, color: typeColor, fontWeight: FontWeight.bold)),
+                    )
+                  ],
+                ),
                 Text(waste, style: const TextStyle(fontSize: 12, color: Color(0xFF7A8B80))),
               ],
             ),
@@ -412,87 +811,230 @@ class _YardDashboardScreenState extends State<YardDashboardScreen>
     );
   }
 
+  Widget _buildFloatingScanButton() {
+    return ScaleTransition(
+      scale: _pulseAnim,
+      child: FloatingActionButton(
+        onPressed: _isOpen
+            ? () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => QrScannerScreen(token: widget.token),
+                  ),
+                );
+              }
+            : () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Hãy mở cửa vựa trước khi quét QR!'),
+                    backgroundColor: Color(0xFF546E7A),
+                  ),
+                );
+              },
+        backgroundColor: _isOpen ? const Color(0xFF1B8E5A) : const Color(0xFF78909C),
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+        child: const Icon(Icons.qr_code_scanner_rounded, size: 28, color: Colors.white),
+      ),
+    );
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // STATS TAB
   // ─────────────────────────────────────────────────────────────────────────────
   Widget _buildStatsTab() {
+    if (_isLoadingChart) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF2E7D32)));
+    }
+
+    if (_chartData.isEmpty) {
+      return const Center(child: Text('Chưa có dữ liệu thống kê'));
+    }
+
+    // Đảo ngược list để hiển thị từ cũ nhất -> mới nhất từ trái sang phải
+    final dataReversed = _chartData.reversed.toList();
+    final maxRev = dataReversed.fold<double>(0, (prev, element) => element.totalRevenue > prev ? element.totalRevenue : prev);
+
     return SafeArea(
-      child: Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Thống kê Doanh thu',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
+                ),
+                DropdownButton<String>(
+                  value: _statsFilter,
+                  icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1B8E5A)),
+                  underline: const SizedBox(),
+                  style: const TextStyle(color: Color(0xFF1B8E5A), fontWeight: FontWeight.bold, fontSize: 13),
+                  items: const [
+                    DropdownMenuItem(value: 'All', child: Text('Tất cả')),
+                    DropdownMenuItem(value: 'Drop-off', child: Text('Đem đến')),
+                    DropdownMenuItem(value: 'Pick-up', child: Text('Đi lấy')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setState(() => _statsFilter = val);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4)],
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left, size: 20),
+                        onPressed: () => _changeStatsMonth(-1),
+                      ),
+                      Text('T${_statsMonth.month}/${_statsMonth.year}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right, size: 20),
+                        onPressed: () => _changeStatsMonth(1),
+                      ),
+                    ],
+                  ),
+                )
+              ],
+            ),
+            const SizedBox(height: 24),
             Container(
-              padding: const EdgeInsets.all(20),
+              height: 250,
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFF1B8E5A).withOpacity(0.1),
-                shape: BoxShape.circle,
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                ],
               ),
-              child: const Icon(Icons.bar_chart_rounded, size: 48, color: Color(0xFF1B8E5A)),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: dataReversed.map((d) {
+                    double revenue = 0;
+                    if (_statsFilter == 'All') revenue = d.totalRevenue;
+                    else if (_statsFilter == 'Drop-off') revenue = d.dropOffRevenue;
+                    else if (_statsFilter == 'Pick-up') revenue = d.pickUpRevenue;
+                    
+                    final double heightRatio = maxRev > 0 ? (revenue / maxRev) : 0;
+                    final double barHeight = heightRatio * 160;
+
+                    return Container(
+                      width: 40,
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Text(
+                            revenue >= 1000 ? '${(revenue / 1000).toStringAsFixed(0)}k' : revenue.toStringAsFixed(0),
+                            style: const TextStyle(fontSize: 10, color: Color(0xFF2E7D32), fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 500),
+                            width: 24,
+                            height: barHeight == 0 ? 4 : barHeight,
+                            decoration: BoxDecoration(
+                              color: barHeight == 0 ? Colors.grey.shade300 : const Color(0xFF2E7D32),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(d.date, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Khối lượng Thu gom',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Thống kê Doanh thu',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
-            ),
-            const SizedBox(height: 8),
-            const Text('Tính năng đang được phát triển', style: TextStyle(color: Color(0xFF7A8B80))),
+            ...dataReversed.map((d) {
+              double kg = 0;
+              if (_statsFilter == 'All') kg = d.totalKg;
+              else if (_statsFilter == 'Drop-off') kg = d.dropOffKg;
+              else if (_statsFilter == 'Pick-up') kg = d.pickUpKg;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Ngày ${d.date}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1A2E22))),
+                    Text('${kg.toStringAsFixed(1)} kg', style: const TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            }),
           ],
         ),
       ),
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // BOTTOM NAV
+  // ─────────────────────────────────────────────────────────────────────────────
   Widget _buildBottomNav() {
-    final items = [
-      (Icons.home_rounded, 'Trang chủ'),
-      (Icons.bar_chart_rounded, 'Thống kê'),
-    ];
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 16, offset: const Offset(0, -4)),
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(items.length, (i) {
-              final selected = _selectedTab == i;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedTab = i),
-                behavior: HitTestBehavior.opaque,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: selected ? const Color(0xFF1B8E5A).withOpacity(0.12) : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(items[i].$1, size: 24, color: selected ? const Color(0xFF1B8E5A) : const Color(0xFFB0BEC5)),
-                      const SizedBox(height: 3),
-                      Text(
-                        items[i].$2,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                          color: selected ? const Color(0xFF1B8E5A) : const Color(0xFFB0BEC5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ),
+    return BottomNavigationBar(
+      currentIndex: _selectedTab,
+      onTap: (index) => setState(() => _selectedTab = index),
+      type: BottomNavigationBarType.fixed,
+      selectedItemColor: const Color(0xFF1B8E5A),
+      unselectedItemColor: const Color(0xFF9E9E9E),
+      showUnselectedLabels: true,
+      elevation: 20,
+      backgroundColor: Colors.white,
+      items: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.home_outlined),
+          activeIcon: Icon(Icons.home_rounded),
+          label: 'Trang chủ',
         ),
-      ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.sell_outlined),
+          activeIcon: Icon(Icons.sell_rounded),
+          label: 'Bảng giá',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.bar_chart_outlined),
+          activeIcon: Icon(Icons.bar_chart_rounded),
+          label: 'Doanh thu',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.person_outline),
+          activeIcon: Icon(Icons.person),
+          label: 'Tôi',
+        ),
+      ],
     );
   }
 }

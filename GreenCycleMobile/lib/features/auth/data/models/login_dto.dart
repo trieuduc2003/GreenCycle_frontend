@@ -11,6 +11,19 @@ class LoginRequestDto {
   };
 }
 
+// ─── Đăng nhập Google ────────────────────────────────
+class GoogleLoginRequestDto {
+  final String idToken;
+  final int? roleId;
+
+  GoogleLoginRequestDto({required this.idToken, this.roleId});
+
+  Map<String, dynamic> toJson() => {
+    'idToken': idToken,
+    if (roleId != null) 'roleId': roleId,
+  };
+}
+
 class LoginResponseDto {
   final int userId;
   final String token;

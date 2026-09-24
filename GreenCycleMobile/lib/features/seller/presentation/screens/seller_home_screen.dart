@@ -1,15 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../data/repositories/wallet_repository.dart';
 import '../../data/models/wallet_dto.dart';
 import 'create_order_screen.dart';
+import 'order_history_screen.dart';
 import 'package:signalr_netcore/signalr_client.dart';
 import '../../../../core/constants/api_endpoints.dart';
 import '../../../transaction/data/models/transaction_dto.dart';
 import '../../../transaction/data/repositories/transaction_repository.dart';
+import '../../../yard/presentation/screens/nearby_yards_screen.dart';
+import '../../../yard/data/services/yard_api_service.dart';
+import '../../../yard/data/models/scrap_yard_model.dart';
+import 'reward_store_screen.dart';
+import 'user_profile_screen.dart';
+import 'saved_addresses_screen.dart';
+import '../../../notification/presentation/screens/notifications_screen.dart';
+import '../../../settings/presentation/screens/app_settings_screen.dart';
+import '../../../support/presentation/screens/support_screen.dart';
+import '../../../policy/presentation/screens/policy_screen.dart';
+
 
 /// Màn hình Home của Người bán (Seller) — A05 trong UI spec.
 /// Hiển thị: số dư GreenPoints, 3 lối tắt (Bán rác / Đổi quà / Vựa gần),
@@ -38,12 +51,16 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
   WalletBalanceDto? _wallet;
   String? _walletError;
 
+  // Nearby yards state
+  List<ScrapYardModel> _nearbyYards = [];
+  bool _isLoadingYards = false;
+
   late final AnimationController _cardController;
   late final Animation<double> _cardFade;
   late final Animation<Offset> _cardSlide;
 
   final _walletRepo = WalletRepository();
-  final _txRepo = TransactionRepository();
+  final _yardApiService = YardApiService();
   HubConnection? _hubConnection;
 
   @override
@@ -61,6 +78,7 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
     ).animate(CurvedAnimation(parent: _cardController, curve: Curves.easeOutCubic));
 
     _fetchWallet();
+    _fetchNearbyYards();
   }
 
   @override
@@ -139,6 +157,59 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
     }
   }
 
+  /// Lấy vựa gần nhất từ GPS để hiển thị trong Home Tab (không block UI).
+  Future<void> _fetchNearbyYards() async {
+    setState(() => _isLoadingYards = true);
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) setState(() => _isLoadingYards = false);
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (mounted) setState(() => _isLoadingYards = false);
+        return;
+      }
+
+      // Dùng vị trí cũ trước cho nhanh, sau đó nếu có GPS mới thì update
+      Position? position = await Geolocator.getLastKnownPosition();
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.low,
+            timeLimit: Duration(seconds: 8),
+          ),
+        ).timeout(const Duration(seconds: 10));
+      } catch (_) {}
+
+      if (position == null) {
+        if (mounted) setState(() => _isLoadingYards = false);
+        return;
+      }
+
+      final yards = await _yardApiService.getNearbyYards(
+        token: widget.token,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+
+      if (mounted) {
+        setState(() {
+          _nearbyYards = yards.take(3).toList();
+          _isLoadingYards = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingYards = false);
+    }
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -159,9 +230,16 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
       case 0:
         return _buildHomeTab();
       case 1:
-        return _buildPlaceholderTab('Bản đồ Vựa phế liệu', Icons.map_outlined);
+        return OrderHistoryScreen(
+          token: widget.token,
+          onBackToHome: () => setState(() => _selectedTab = 0),
+        );
       case 2:
-        return _buildPlaceholderTab('Đổi quà GreenPoints', Icons.card_giftcard_outlined);
+        return RewardStoreScreen(
+          token: widget.token,
+          onWalletChanged: _fetchWallet,
+          onBackToHome: () => setState(() => _selectedTab = 0),
+        );
       case 3:
         return _buildProfileTab();
       default:
@@ -222,9 +300,21 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
     );
   }
 
+  // ── Helper format tên người dùng ───────────────────────────────────────────
+  String _getCleanFullName(String name) {
+    final clean = name.replaceAll(RegExp(r'\s*[\(\[][^()\[\]]*[\)\]]\s*'), '').trim();
+    return clean.isNotEmpty ? clean : name;
+  }
+
+  String _getGreetingName(String name) {
+    final clean = _getCleanFullName(name);
+    final parts = clean.split(RegExp(r'\s+'));
+    return parts.isNotEmpty ? parts.last : clean;
+  }
+
   // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
-    final firstName = widget.fullName.split(' ').last;
+    final firstName = _getGreetingName(widget.fullName);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
@@ -266,42 +356,50 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
   }
 
   Widget _buildNotifBell() {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.notifications_outlined,
-            color: Color(0xFF2A5C3F),
-            size: 22,
-          ),
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => NotificationsScreen(token: widget.token),
         ),
-        Positioned(
-          top: -2,
-          right: -2,
-          child: Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFF5252),
-              shape: BoxShape.circle,
+      ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.notifications_outlined,
+              color: Color(0xFF2A5C3F),
+              size: 22,
             ),
           ),
-        ),
-      ],
+          Positioned(
+            top: -2,
+            right: -2,
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFF5252),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -485,14 +583,31 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
             label: 'Đổi quà',
             color: const Color(0xFFD4770A),
             bgColor: const Color(0xFFFFF3E0),
-            onTap: () => _showComingSoon('Đổi quà'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => RewardStoreScreen(
+                    token: widget.token,
+                    onWalletChanged: _fetchWallet,
+                  ),
+                ),
+              ).then((_) => _fetchWallet());
+            },
           ),
           _buildShortcut(
             icon: Icons.storefront_outlined,
             label: 'Vựa gần',
             color: const Color(0xFF1565C0),
             bgColor: const Color(0xFFE3F2FD),
-            onTap: () => _showComingSoon('Vựa gần'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NearbyYardsScreen(token: widget.token),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -548,55 +663,94 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Center(
-                  child: Text(
-                    'A',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryGreen,
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 18),
                   ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Vựa gần tôi',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22)),
+                  ),
+                ],
+              ),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => NearbyYardsScreen(token: widget.token)),
                 ),
+                child: const Text('Xem tất cả', style: TextStyle(color: AppColors.primaryGreen, fontSize: 13)),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          _buildNearbyCard(
-            name: 'Vựa Phú Nhuận',
-            distance: '1.2km',
-            rating: 4.8,
-            status: 'Mở cửa',
-          ),
           const SizedBox(height: 12),
-          _buildNearbyCard(
-            name: 'Vựa Bình Thạnh',
-            distance: '2.5km',
-            rating: 4.6,
-            status: 'Mở cửa',
-          ),
+
+          // Content
+          if (_isLoadingYards)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: CircularProgressIndicator(color: AppColors.primaryGreen, strokeWidth: 2.5),
+              ),
+            )
+          else if (_nearbyYards.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 2)),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(color: const Color(0xFFF0F4F1), borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.search_off_rounded, color: Color(0xFF7A8B80), size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Chưa tìm thấy vựa nào', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF1A2E22))),
+                        SizedBox(height: 4),
+                        Text('Hãy mở GPS và thử xem tất cả vựa.', style: TextStyle(fontSize: 12.5, color: Color(0xFF7A8B80))),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._nearbyYards.map((yard) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildNearbyCard(yard: yard),
+            )),
         ],
       ),
     );
   }
 
-  Widget _buildNearbyCard({
-    required String name,
-    required String distance,
-    required double rating,
-    required String status,
-  }) {
+  Widget _buildNearbyCard({required ScrapYardModel yard}) {
     return GestureDetector(
-      onTap: () => _showComingSoon('Vựa gần'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => NearbyYardsScreen(token: widget.token)),
+      ),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -631,33 +785,28 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$name · $distance',
+                    yard.name,
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF1A2E22),
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Text(
-                        status,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF7A8B80),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.star_rounded, color: Color(0xFFFFC107), size: 14),
-                      const SizedBox(width: 2),
-                      Text(
-                        rating.toStringAsFixed(1),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1A2E22),
+                      Expanded(
+                        child: Text(
+                          yard.address,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF7A8B80),
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -676,11 +825,12 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
     );
   }
 
+
   // ── Bottom Nav ─────────────────────────────────────────────────────────────
   Widget _buildBottomNav() {
     const items = [
       _NavItem(icon: Icons.home_rounded, label: 'Trang chủ'),
-      _NavItem(icon: Icons.map_outlined, label: 'Bản đồ'),
+      _NavItem(icon: Icons.receipt_long_outlined, label: 'Đơn hàng'),
       _NavItem(icon: Icons.card_giftcard_outlined, label: 'Đổi quà'),
       _NavItem(icon: Icons.person_outline_rounded, label: 'Tôi'),
     ];
@@ -777,8 +927,9 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
 
   // ── Profile Tab & Logout ───────────────────────────────────────────────────
   Widget _buildProfileTab() {
-    final initials = widget.fullName.isNotEmpty
-        ? widget.fullName.trim().split(' ').map((e) => e.isNotEmpty ? e[0] : '').take(2).join().toUpperCase()
+    final cleanName = _getCleanFullName(widget.fullName);
+    final initials = cleanName.isNotEmpty
+        ? cleanName.trim().split(RegExp(r'\s+')).map((e) => e.isNotEmpty ? e[0] : '').take(2).join().toUpperCase()
         : 'GC';
 
     return SafeArea(
@@ -834,7 +985,7 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.fullName,
+                          cleanName,
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -923,19 +1074,40 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
                   _buildProfileMenuItem(
                     icon: Icons.person_outline_rounded,
                     title: 'Thông tin cá nhân',
-                    onTap: () => _showComingSoon('Thông tin cá nhân'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => UserProfileScreen(
+                          token: widget.token,
+                          fullName: widget.fullName,
+                        ),
+                      ),
+                    ),
                   ),
                   const Divider(height: 1, indent: 56, endIndent: 16, color: Color(0xFFEFF2F0)),
                   _buildProfileMenuItem(
-                    icon: Icons.history_rounded,
+                    icon: Icons.recycling_rounded,
                     title: 'Lịch sử thu gom rác',
-                    onTap: () => _showComingSoon('Lịch sử thu gom'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => OrderHistoryScreen(
+                          token: widget.token,
+                          onBackToHome: () => Navigator.pop(context),
+                        ),
+                      ),
+                    ),
                   ),
                   const Divider(height: 1, indent: 56, endIndent: 16, color: Color(0xFFEFF2F0)),
                   _buildProfileMenuItem(
                     icon: Icons.location_on_outlined,
                     title: 'Địa chỉ đã lưu',
-                    onTap: () => _showComingSoon('Địa chỉ'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SavedAddressesScreen(token: widget.token),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -962,25 +1134,33 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
                   _buildProfileMenuItem(
                     icon: Icons.settings_outlined,
                     title: 'Cài đặt ứng dụng',
-                    onTap: () => _showComingSoon('Cài đặt'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
+                    ),
                   ),
                   const Divider(height: 1, indent: 56, endIndent: 16, color: Color(0xFFEFF2F0)),
                   _buildProfileMenuItem(
                     icon: Icons.help_outline_rounded,
                     title: 'Trung tâm hỗ trợ',
-                    onTap: () => _showComingSoon('Hỗ trợ'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SupportScreen()),
+                    ),
                   ),
                   const Divider(height: 1, indent: 56, endIndent: 16, color: Color(0xFFEFF2F0)),
                   _buildProfileMenuItem(
                     icon: Icons.shield_outlined,
                     title: 'Điều khoản & Chính sách',
-                    onTap: () => _showComingSoon('Chính sách'),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const PolicyScreen()),
+                    ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 28),
 
             // Logout Button
             SizedBox(
@@ -1204,32 +1384,123 @@ class _DoubleConfirmationDialogState extends State<_DoubleConfirmationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isPickup = widget.payload.isPickup;
+    final partnerName = widget.payload.partnerDisplayName;
+
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      title: const Row(
+      titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.verified_user_outlined, color: AppColors.primaryGreen),
-          SizedBox(width: 8),
-          Text('Xác nhận giao dịch', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          Row(
+            children: [
+              Icon(
+                isPickup ? Icons.local_shipping_rounded : Icons.verified_user_outlined,
+                color: AppColors.primaryGreen,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Xác nhận giao dịch',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Chip loại giao dịch
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: isPickup
+                  ? const Color(0xFFE3F2FD)
+                  : const Color(0xFFE8F5E9),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              isPickup ? '🚚 Giao dịch Pick-up' : '🏪 Giao dịch Drop-off',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: isPickup ? const Color(0xFF1565C0) : AppColors.primaryGreen,
+              ),
+            ),
+          ),
         ],
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Vựa: ${widget.payload.yardName}',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          const SizedBox(height: 4),
+          // Tên đối tác
+          Row(
+            children: [
+              Icon(
+                isPickup ? Icons.person_rounded : Icons.storefront_rounded,
+                size: 18,
+                color: const Color(0xFF7A8B80),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  isPickup ? 'Tài xế: $partnerName' : 'Vựa: $partnerName',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
+          // SĐT tài xế (chỉ hiện cho Pick-up)
+          if (isPickup && widget.payload.collectorPhone != null && widget.payload.collectorPhone!.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Icon(Icons.phone_outlined, size: 16, color: Color(0xFF7A8B80)),
+                const SizedBox(width: 6),
+                Text(
+                  widget.payload.collectorPhone!,
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF4A5D50)),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
-          _buildRow('Tổng trị giá', '${widget.payload.totalActualAmount} GP'),
-          _buildRow('Phí dịch vụ', '- ${widget.payload.platformFee} GP', isMinus: true),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          _buildRow('Tổng trị giá', '${widget.payload.totalActualAmount.toStringAsFixed(0)} GP'),
+          if (widget.payload.platformFee > 0)
+            _buildRow(
+              isPickup ? 'Phí tiện lợi (20%)' : 'Phí dịch vụ (10%)',
+              '- ${widget.payload.platformFee.toStringAsFixed(0)} GP',
+              isMinus: true,
+            ),
           const Divider(height: 24, thickness: 1),
-          _buildRow('Thực nhận', '${widget.payload.netGreenPoints} GP', isTotal: true),
-          const SizedBox(height: 24),
-          const Text(
-            'Bằng việc xác nhận, bạn đồng ý với số liệu khối lượng thực tế Chủ Vựa đã nhập.',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+          _buildRow('Thực nhận', '${widget.payload.netGreenPoints.toStringAsFixed(0)} GP', isTotal: true),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFFFE082)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 16),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text(
+                    'Bằng việc xác nhận, bạn đồng ý với số liệu khối lượng thực tế đã được nhập. Giao dịch sẽ không thể hoàn tác.',
+                    style: TextStyle(fontSize: 11.5, color: Color(0xFF795548)),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1242,6 +1513,7 @@ class _DoubleConfirmationDialogState extends State<_DoubleConfirmationDialog> {
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primaryGreen,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           ),
           onPressed: _isConfirming ? null : _confirm,
           child: _isConfirming
