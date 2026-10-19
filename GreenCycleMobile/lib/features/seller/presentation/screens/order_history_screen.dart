@@ -235,6 +235,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         builder: (_) => SellerQrDisplayScreen(
                           orderId: order.orderId,
                           orderInfo: '${order.itemsCount} loại rác • ${_translateMethod(order.methodName)}',
+                          token: widget.token,
                         ),
                       ),
                     );

@@ -1,65 +1,50 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/location_helper.dart';
 import '../../data/models/scrap_yard_model.dart';
 import '../../data/services/yard_api_service.dart';
 import '../../../seller/presentation/screens/seller_qr_display_screen.dart';
+import '../../../seller/presentation/screens/create_order_screen.dart';
 
-/// Màn hình A07: Tìm vựa rác gần đây.
-///
-/// Cấu trúc UI:
-/// - Nền: Google Map toàn màn hình (hiển thị vị trí người dùng + markers vựa)
-/// - Phía trên: AppBar mờ với nút quay lại
-/// - Phía dưới: DraggableScrollableSheet — kéo lên/xuống để xem danh sách vựa
+/// Màn hình Bản đồ & Danh sách các Vựa rác gần người dùng nhất.
 class NearbyYardsScreen extends StatefulWidget {
-  /// JWT token — cần thiết để gọi API backend
   final String token;
-  
-  /// Nếu người dùng đã tạo đơn hàng trước đó, ta truyền orderId vào để có thể quét QR
   final int? orderId;
 
-  const NearbyYardsScreen({super.key, required this.token, this.orderId});
+  const NearbyYardsScreen({
+    super.key,
+    required this.token,
+    this.orderId,
+  });
 
   @override
   State<NearbyYardsScreen> createState() => _NearbyYardsScreenState();
 }
 
 class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
-  // ── State Variables ────────────────────────────────────────────────────────
-
-  /// Controller để điều khiển bản đồ (camera, markers...)
   final MapController _mapController = MapController();
+  final YardApiService _apiService = YardApiService();
 
-  /// Vị trí GPS hiện tại của người dùng
+  static const LatLng _defaultLocation = LatLng(10.7769, 106.7009); // Bưu điện Trung tâm Sài Gòn
+
   Position? _currentPosition;
-
-  /// Tập hợp các marker hiển thị trên bản đồ
-  final List<Marker> _markers = [];
-
-  /// Danh sách vựa rác trả về từ API
   List<ScrapYardModel> _yards = [];
-
-  /// Trạng thái loading khi đang xử lý
+  final List<Marker> _markers = [];
   bool _isLoading = true;
-
-  /// Thông báo lỗi nếu có
   String? _errorMessage;
 
-  /// Service gọi API
-  final _apiService = YardApiService();
-
-  // ── Default location: TP.HCM (dùng khi chưa lấy được GPS) ─────────────────
-  static const LatLng _defaultLocation = LatLng(10.7769, 106.7009);
-
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  // Bán kính tìm kiếm (mặc định 10km)
+  double _radiusMeters = 10000;
+  final List<double> _radiusOptions = [3000, 5000, 10000, 20000];
 
   @override
   void initState() {
     super.initState();
-    // Khởi động quá trình: Lấy GPS → Gọi API → Hiển thị kết quả
     _initializeLocationAndYards();
   }
 
@@ -69,10 +54,6 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     super.dispose();
   }
 
-  // ── Core Logic ─────────────────────────────────────────────────────────────
-
-  /// Bước 1: Xin quyền và lấy tọa độ GPS của người dùng.
-  /// Bước 2: Dùng tọa độ đó gọi API backend lấy danh sách vựa gần đây.
   Future<void> _initializeLocationAndYards() async {
     setState(() {
       _isLoading = true;
@@ -80,86 +61,79 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     });
 
     try {
-      // ── BƯỚC 1: Xin quyền GPS ──────────────────────────────────────────────
-      // Kiểm tra xem dịch vụ Location có bật không
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw Exception(
-          'Dịch vụ định vị đang tắt.\nVui lòng bật GPS trong Cài đặt.',
-        );
+      final position = await LocationHelper.getCurrentPosition();
+      if (position == null) {
+        throw Exception('Không thể xác định vị trí. Vui lòng bật định vị GPS và cấp quyền cho GreenCycle.');
       }
 
-      // Kiểm tra và xin quyền truy cập vị trí
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        // Hiện hộp thoại xin quyền
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw Exception('Quyền truy cập vị trí bị từ chối.');
-        }
-      }
+      await _fetchYardsForPosition(position, _radiusMeters);
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _isLoading = false;
+      });
+    }
+  }
 
-      if (permission == LocationPermission.deniedForever) {
-        // Người dùng từ chối vĩnh viễn → hướng đến Cài đặt hệ thống
-        throw Exception(
-          'Quyền vị trí bị chặn vĩnh viễn.\nVui lòng cấp quyền trong Cài đặt ứng dụng.',
-        );
-      }
+  Future<void> _fetchYardsForPosition(Position position, double radius) async {
+    final yards = await _apiService.getNearbyYards(
+      token: widget.token,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      radiusMeters: radius,
+    );
 
-      // Lấy tọa độ hiện tại với LocationSettings (API mới)
-      Position? position;
-      try {
-        position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: Duration(seconds: 10),
+    final markers = <Marker>[];
+
+    // Marker vị trí người dùng
+    markers.add(
+      Marker(
+        width: 48.0,
+        height: 48.0,
+        point: LatLng(position.latitude, position.longitude),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.blue.withValues(alpha: 0.2),
+            shape: BoxShape.circle,
           ),
-        ).timeout(const Duration(seconds: 12));
-      } catch (_) {
-        // Fallback: Nếu không lấy được GPS tức thời (do ở trong nhà hoặc máy bị treo GPS), lấy vị trí cũ gần nhất
-        position = await Geolocator.getLastKnownPosition();
-        if (position == null) {
-          throw Exception('Không thể xác định vị trí. Vui lòng bật định vị GPS và thử lại.');
-        }
-      }
+          child: const Center(
+            child: Icon(Icons.my_location_rounded, color: Colors.blue, size: 28.0),
+          ),
+        ),
+      ),
+    );
 
-      // ── BƯỚC 2: Gọi API Backend ────────────────────────────────────────────
-      final yards = await _apiService.getNearbyYards(
-        token: widget.token,
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
-
-      // ── BƯỚC 3: Cập nhật Markers trên bản đồ ──────────────────────────────
-      final markers = <Marker>[];
-
-      // Marker vị trí người dùng (màu xanh lam)
+    // Marker cho từng vựa rác
+    for (final yard in yards) {
       markers.add(
         Marker(
-          width: 48.0,
-          height: 48.0,
-          point: LatLng(position.latitude, position.longitude),
-          child: const Icon(Icons.my_location, color: Colors.blue, size: 32.0),
-        ),
-      );
-
-      // Marker cho từng vựa rác (màu xanh lá)
-      for (final yard in yards) {
-        markers.add(
-          Marker(
-            width: 40.0,
-            height: 40.0,
-            point: LatLng(yard.latitude, yard.longitude),
-            child: Icon(
-              Icons.location_on, 
-              color: yard.isOpening ? AppColors.primaryGreen : Colors.red, 
-              size: 36.0,
+          width: 44.0,
+          height: 44.0,
+          point: LatLng(yard.latitude, yard.longitude),
+          child: GestureDetector(
+            onTap: () => _selectYardAction(yard),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 6, offset: const Offset(0, 2)),
+                ],
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.storefront_rounded,
+                  color: yard.isOpening ? AppColors.primaryGreen : Colors.redAccent,
+                  size: 26.0,
+                ),
+              ),
             ),
           ),
-        );
-      }
+        ),
+      );
+    }
 
-      // Cập nhật state
+    if (mounted) {
       setState(() {
         _currentPosition = position;
         _yards = yards;
@@ -168,137 +142,237 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
         _isLoading = false;
       });
 
-      // Di chuyển camera đến vị trí người dùng
       _mapController.move(
         LatLng(position.latitude, position.longitude),
-        14.0, // zoom level: 14 = nhìn được khu vực vài km
+        13.5,
       );
-    } catch (e) {
-      // Hiển thị lỗi lên màn hình
-      setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
-        _isLoading = false;
-      });
     }
   }
 
-  /// Mở Google Maps chỉ đường đến vựa khi người dùng bấm "Bắt đầu đi".
-  ///
-  /// Sử dụng [url_launcher] để mở app Google Maps bên ngoài.
-  /// URL format: https://www.google.com/maps/dir/?api=1&destination={lat},{lng}&travelmode=driving
-  Future<void> _startNavigation(ScrapYardModel yard) async {
-    // Nếu có orderId, lưu lại vựa người dùng đã chọn
-    if (widget.orderId != null) {
-      try {
-        await _apiService.selectYardForOrder(
-          token: widget.token,
-          orderId: widget.orderId!,
-          yardId: yard.yardId,
-        );
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Lỗi khi lưu vựa: ${e.toString().replaceAll('Exception: ', '')}'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
-        // Vẫn cho phép đi tiếp nếu lỗi (tuỳ policy, nhưng cứ cho mở Map)
-      }
-    }
+  void _onRadiusChanged(double newRadius) {
+    if (_radiusMeters == newRadius || _currentPosition == null) return;
+    setState(() {
+      _radiusMeters = newRadius;
+      _isLoading = true;
+    });
+    _fetchYardsForPosition(_currentPosition!, newRadius);
+  }
 
+  Future<void> _startNavigation(ScrapYardModel yard) async {
     final url = Uri.parse(
       'https://www.google.com/maps/dir/?api=1'
       '&destination=${yard.latitude},${yard.longitude}'
       '&travelmode=driving',
     );
 
-    // Kiểm tra xem device có thể mở URL này không
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
-      // Fallback: Thông báo nếu không mở được
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Không thể mở Google Maps. Vui lòng cài đặt ứng dụng.'),
-            backgroundColor: Colors.redAccent,
-          ),
+          const SnackBar(content: Text('Không thể mở Google Maps.')),
         );
       }
     }
   }
 
-  // ── UI Build ───────────────────────────────────────────────────────────────
+  Future<void> _selectYardAction(ScrapYardModel yard) async {
+    _mapController.move(LatLng(yard.latitude, yard.longitude), 15.0);
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      // Không có AppBar cố định — dùng Stack để overlay bản đồ
-      body: Stack(
-        children: [
-          // ── LAYER 1: OpenStreetMap (nền toàn màn hình) ────────────────────────
-          _buildFlutterMap(),
-
-          // ── LAYER 2: Nút quay lại (floating, không che bản đồ nhiều) ───────
-          _buildBackButton(),
-
-          // ── LAYER 3: Nút hiện QR nhanh (nếu có orderId) ────────────────────
-          if (widget.orderId != null)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 12,
-              right: 16,
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => SellerQrDisplayScreen(
-                        orderId: widget.orderId!,
-                        orderInfo: 'Đơn hàng tự mang đi',
-                      ),
-                    ),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: Colors.white,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryGreen,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 10, offset: const Offset(0, 3)),
-                    ],
+                    color: AppColors.primaryGreen.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
+                  child: const Icon(Icons.storefront_rounded, color: AppColors.primaryGreen, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.qr_code_scanner_rounded, size: 16, color: Colors.white),
-                      SizedBox(width: 6),
                       Text(
-                        'Mã QR',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                        yard.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Color(0xFF1A2E22)),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: yard.isOpening ? const Color(0xFFE0F4EB) : const Color(0xFFFCE4E4),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              yard.isOpening ? 'Mở cửa' : 'Đóng cửa',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: yard.isOpening ? AppColors.primaryGreen : Colors.redAccent,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '•  Cách bạn: ${yard.distanceFormatted}',
+                            style: const TextStyle(fontSize: 12.5, color: Color(0xFF6B7D72), fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Icon(Icons.location_on_outlined, size: 16, color: Color(0xFF7A8B80)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    yard.address,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF4A5D50)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _startNavigation(yard);
+                    },
+                    icon: const Icon(Icons.navigation_rounded, size: 18),
+                    label: const Text('Chỉ đường'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      side: const BorderSide(color: AppColors.primaryGreen),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      if (widget.orderId != null) {
+                        try {
+                          await _apiService.selectYardForOrder(
+                            token: widget.token,
+                            orderId: widget.orderId!,
+                            yardId: yard.yardId,
+                          );
+                        } catch (_) {}
 
-          // ── LAYER 4: Loading overlay ────────────────────────────────────────
+                        if (mounted) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => SellerQrDisplayScreen(
+                                orderId: widget.orderId!,
+                                orderInfo: 'Đơn mang đến: ${yard.name}',
+                                token: widget.token,
+                              ),
+                            ),
+                          );
+                        }
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CreateOrderScreen(token: widget.token),
+                          ),
+                        );
+                      }
+                    },
+                    icon: Icon(
+                      widget.orderId != null ? Icons.qr_code_rounded : Icons.add_circle_outline_rounded,
+                      size: 18,
+                    ),
+                    label: Text(
+                      widget.orderId != null ? 'Chọn & Mở mã QR' : 'Tạo đơn mang đến đây',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // ── LAYER 1: Bản đồ CartoDB Voyager Retina (Load cực nhanh, không trắng màn hình)
+          _buildFlutterMap(),
+
+          // ── LAYER 2: Nút quay lại & Nút Mở QR
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 16,
+            right: 16,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildBackButton(),
+                if (widget.orderId != null) _buildQrButton(),
+              ],
+            ),
+          ),
+
+          // ── LAYER 3: Thanh chọn bán kính (Radius Filter)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 65,
+            left: 16,
+            right: 16,
+            child: _buildRadiusFilterBar(),
+          ),
+
+          // ── LAYER 4: Loading overlay
           if (_isLoading) _buildLoadingOverlay(),
 
-          // ── LAYER 5: Error overlay ──────────────────────────────────────────
+          // ── LAYER 5: Error overlay
           if (!_isLoading && _errorMessage != null) _buildErrorOverlay(),
 
-          // ── LAYER 6: Draggable sheet danh sách vựa (kéo lên/xuống) ─────────
+          // ── LAYER 6: Draggable sheet danh sách vựa
           if (!_isLoading && _errorMessage == null) _buildDraggableYardList(),
         ],
       ),
     );
   }
 
-  /// Bản đồ OpenStreetMap chiếm toàn bộ màn hình
   Widget _buildFlutterMap() {
     final initialTarget = _currentPosition != null
         ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
@@ -308,12 +382,14 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
       mapController: _mapController,
       options: MapOptions(
         initialCenter: initialTarget,
-        initialZoom: 14.0,
+        initialZoom: 13.5,
       ),
       children: [
+        // OpenStreetMap tiêu chuẩn, miễn phí và không yêu cầu API key
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.greencycle.mobile',
+          userAgentPackageName: 'com.greencycle.app',
+          maxZoom: 19,
         ),
         MarkerLayer(
           markers: _markers,
@@ -322,59 +398,60 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     );
   }
 
-  /// Nút quay lại góc trên trái, dạng pill (viên thuốc) với nền mờ
-  Widget _buildBackButton() {
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 12,
-      left: 16,
-      child: GestureDetector(
-        onTap: () => Navigator.pop(context),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: Color(0xFF1A2E22)),
-              SizedBox(width: 6),
-              Text(
-                'Vựa gần tôi',
+  Widget _buildRadiusFilterBar() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _radiusOptions.map((r) {
+          final isSelected = _radiusMeters == r;
+          final km = (r / 1000).toInt();
+          return Container(
+            margin: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(
+                'Bán kính $km km',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Color(0xFF1A2E22),
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  color: isSelected ? Colors.white : const Color(0xFF1A2E22),
                 ),
               ),
-            ],
-          ),
-        ),
+              selected: isSelected,
+              selectedColor: AppColors.primaryGreen,
+              backgroundColor: Colors.white,
+              elevation: 3,
+              pressElevation: 1,
+              shadowColor: Colors.black.withValues(alpha: 0.15),
+              checkmarkColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              onSelected: (_) => _onRadiusChanged(r),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
 
-  /// Overlay loading khi đang lấy GPS và gọi API
-  Widget _buildLoadingOverlay() {
-    return Container(
-      color: Colors.black.withOpacity(0.3),
-      child: const Center(
-        child: Column(
+  Widget _buildBackButton() {
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, 3)),
+          ],
+        ),
+        child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: AppColors.primaryGreen, strokeWidth: 3),
-            SizedBox(height: 16),
+            Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: Color(0xFF1A2E22)),
+            SizedBox(width: 6),
             Text(
-              'Đang tìm vựa gần bạn...',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              'Vựa gần tôi',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1A2E22)),
             ),
           ],
         ),
@@ -382,18 +459,73 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     );
   }
 
-  /// Overlay lỗi với nút thử lại
-  Widget _buildErrorOverlay() {
-    return Align(
-      alignment: Alignment.bottomCenter,
+  Widget _buildQrButton() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SellerQrDisplayScreen(
+              orderId: widget.orderId!,
+              orderInfo: 'Đơn hàng tự mang đi',
+              token: widget.token,
+            ),
+          ),
+        );
+      },
       child: Container(
-        margin: const EdgeInsets.all(16),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.primaryGreen,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 10, offset: const Offset(0, 3)),
+          ],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.qr_code_scanner_rounded, size: 16, color: Colors.white),
+            SizedBox(width: 6),
+            Text(
+              'Mã QR',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingOverlay() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.25),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: AppColors.primaryGreen, strokeWidth: 3),
+            SizedBox(height: 16),
+            Text(
+              'Đang tìm vựa rác quanh bạn...',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorOverlay() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 16, offset: const Offset(0, -4)),
+            BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 16, offset: const Offset(0, -4)),
           ],
         ),
         child: Column(
@@ -427,14 +559,10 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     );
   }
 
-  /// DraggableScrollableSheet — sheet kéo lên xuống hiển thị danh sách vựa
   Widget _buildDraggableYardList() {
     return DraggableScrollableSheet(
-      // Chiều cao khởi tạo: 35% màn hình
-      initialChildSize: 0.38,
-      // Chiều cao tối thiểu: 12% (vẫn thấy tab)
+      initialChildSize: 0.36,
       minChildSize: 0.12,
-      // Chiều cao tối đa: 85%
       maxChildSize: 0.85,
       builder: (context, scrollController) {
         return Container(
@@ -447,8 +575,7 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
           ),
           child: Column(
             children: [
-              // ── Drag handle ──────────────────────────────────────────────────
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Container(
                 width: 40,
                 height: 4,
@@ -457,9 +584,7 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 16),
-
-              // ── Header ───────────────────────────────────────────────────────
+              const SizedBox(height: 14),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
@@ -467,7 +592,7 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: AppColors.primaryGreen.withOpacity(0.12),
+                        color: AppColors.primaryGreen.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Icon(Icons.storefront_rounded, color: AppColors.primaryGreen, size: 20),
@@ -481,20 +606,19 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                             'Vựa rác gần bạn',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              fontSize: 17,
+                              fontSize: 16.5,
                               color: Color(0xFF1A2E22),
                             ),
                           ),
                           Text(
                             _yards.isEmpty
-                                ? 'Không tìm thấy vựa trong 5km'
-                                : '${_yards.length} vựa trong bán kính 5km',
-                            style: const TextStyle(color: Color(0xFF7A8B80), fontSize: 12.5),
+                                ? 'Không có vựa trong bán kính ${(_radiusMeters / 1000).toInt()}km'
+                                : '${_yards.length} vựa trong bán kính ${(_radiusMeters / 1000).toInt()}km',
+                            style: const TextStyle(color: Color(0xFF7A8B80), fontSize: 12),
                           ),
                         ],
                       ),
                     ),
-                    // Nút làm mới
                     IconButton(
                       onPressed: _initializeLocationAndYards,
                       icon: const Icon(Icons.refresh_rounded, color: AppColors.primaryGreen),
@@ -503,19 +627,14 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
-
-              // ── Divider ──────────────────────────────────────────────────────
+              const SizedBox(height: 10),
               const Divider(height: 1, color: Color(0xFFEAF4EE)),
-              const SizedBox(height: 8),
-
-              // ── Danh sách vựa ────────────────────────────────────────────────
               Expanded(
                 child: _yards.isEmpty
                     ? _buildEmptyState()
                     : ListView.builder(
                         controller: scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                         itemCount: _yards.length,
                         itemBuilder: (context, index) => _buildYardCard(_yards[index]),
                       ),
@@ -527,43 +646,31 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
     );
   }
 
-  /// Trạng thái rỗng khi không tìm thấy vựa
   Widget _buildEmptyState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.storefront_outlined, size: 64, color: Color(0xFFC2E0CE)),
-          const SizedBox(height: 12),
-          const Text(
-            'Chưa có vựa nào gần bạn',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF4A5D50)),
+          const Icon(Icons.storefront_outlined, size: 56, color: Color(0xFFC2E0CE)),
+          const SizedBox(height: 10),
+          Text(
+            'Không tìm thấy vựa trong ${(_radiusMeters / 1000).toInt()}km',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF4A5D50)),
           ),
           const SizedBox(height: 6),
           const Text(
-            'Không tìm thấy vựa rác trong bán kính 5km',
-            style: TextStyle(color: Color(0xFF7A8B80), fontSize: 13),
+            'Hãy chọn bán kính rộng hơn ở thanh trên để tìm thêm vựa',
+            style: TextStyle(color: Color(0xFF7A8B80), fontSize: 12.5),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
 
-  /// Card hiển thị thông tin một vựa rác.
-  ///
-  /// Thiết kế:
-  /// - Bên trái: Icon vựa
-  /// - Giữa: Tên, địa chỉ, trạng thái + khoảng cách
-  /// - Bên phải: Nút "Bắt đầu đi" màu xanh
   Widget _buildYardCard(ScrapYardModel yard) {
     return GestureDetector(
-      // Khi tap vào card → di chuyển camera bản đồ tới vựa đó
-      onTap: () {
-        _mapController.move(
-          LatLng(yard.latitude, yard.longitude),
-          15.0,
-        );
-      },
+      onTap: () => _selectYardAction(yard),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(14),
@@ -573,7 +680,7 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
           border: Border.all(color: const Color(0xFFEAF4EE)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 10,
               offset: const Offset(0, 3),
             ),
@@ -581,14 +688,13 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
         ),
         child: Row(
           children: [
-            // ── Icon vựa ─────────────────────────────────────────────────────
             Container(
               width: 48,
               height: 48,
               decoration: BoxDecoration(
                 color: yard.isOpening
-                    ? AppColors.primaryGreen.withOpacity(0.12)
-                    : Colors.grey.withOpacity(0.12),
+                    ? AppColors.primaryGreen.withValues(alpha: 0.12)
+                    : Colors.grey.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
@@ -597,28 +703,18 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                 size: 24,
               ),
             ),
-
             const SizedBox(width: 12),
-
-            // ── Thông tin vựa ─────────────────────────────────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Tên vựa
                   Text(
                     yard.name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14.5,
-                      color: Color(0xFF1A2E22),
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5, color: Color(0xFF1A2E22)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 3),
-
-                  // Địa chỉ
                   Text(
                     yard.address,
                     style: const TextStyle(color: Color(0xFF7A8B80), fontSize: 12),
@@ -626,31 +722,24 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-
-                  // Row: Badge trạng thái + khoảng cách
                   Row(
                     children: [
-                      // Badge mở/đóng cửa
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: yard.isOpening
-                              ? const Color(0xFFE0F4EB)
-                              : const Color(0xFFFCE4E4),
+                          color: yard.isOpening ? const Color(0xFFE0F4EB) : const Color(0xFFFCE4E4),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           yard.isOpening ? 'Mở cửa' : 'Đóng cửa',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 10.5,
                             fontWeight: FontWeight.bold,
                             color: yard.isOpening ? AppColors.primaryGreen : Colors.redAccent,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
-
-                      // Khoảng cách
                       Row(
                         children: [
                           const Icon(Icons.near_me_rounded, size: 12, color: Color(0xFF7A8B80)),
@@ -670,15 +759,12 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                 ],
               ),
             ),
-
             const SizedBox(width: 10),
-
-            // ── Nút Bắt đầu đi ────────────────────────────────────────────────
-            // Sử dụng url_launcher để mở Google Maps bên ngoài
+            // Nút Thao tác
             GestureDetector(
-              onTap: () => _startNavigation(yard),
+              onTap: () => _selectYardAction(yard),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFF1B8E5A), Color(0xFF0D6B41)],
@@ -687,17 +773,17 @@ class _NearbyYardsScreenState extends State<NearbyYardsScreen> {
                   ),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Column(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.navigation_rounded, color: Colors.white, size: 20),
-                    SizedBox(height: 4),
+                    Icon(widget.orderId != null ? Icons.check_circle_outline : Icons.navigation_rounded, color: Colors.white, size: 18),
+                    const SizedBox(height: 4),
                     Text(
-                      'Đi\nthôi',
+                      widget.orderId != null ? 'Chọn\nvựa' : 'Đi\nthôi',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 10,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
                         height: 1.2,
                       ),

@@ -6,12 +6,14 @@ import '../../data/models/login_dto.dart';
 import '../../data/repositories/auth_repository.dart';
 
 class OtpScreen extends StatefulWidget {
-  final String phone;
+  final String email;
+  final String? phone;
   final RegisterRequestDto Function(String otpCode) buildRegisterRequest;
 
   const OtpScreen({
     super.key,
-    required this.phone,
+    required this.email,
+    this.phone,
     required this.buildRegisterRequest,
   });
 
@@ -104,13 +106,13 @@ class _OtpScreenState extends State<OtpScreen> with SingleTickerProviderStateMix
   Future<void> _resendOtp() async {
     setState(() => _isResending = true);
     try {
-      await _authRepository.sendOtp(widget.phone);
+      await _authRepository.sendOtp(email: widget.email, phone: widget.phone);
       _startCountdown();
-    for (final c in _controllers) {
-      c.clear();
-    }
+      for (final c in _controllers) {
+        c.clear();
+      }
       _focusNodes[0].requestFocus();
-      _showSnack('Mã OTP mới đã được gửi!', isError: false);
+      _showSnack('Mã OTP mới đã được gửi vào email!', isError: false);
     } catch (e) {
       _showSnack(e.toString().replaceAll('Exception: ', ''));
     } finally {
@@ -208,11 +210,11 @@ class _OtpScreenState extends State<OtpScreen> with SingleTickerProviderStateMix
             color: AppColors.cardBackground,
             borderRadius: BorderRadius.circular(16),
           ),
-          child: const Icon(Icons.sms_outlined, color: AppColors.primaryGreen, size: 30),
+          child: const Icon(Icons.mark_email_read_outlined, color: AppColors.primaryGreen, size: 30),
         ),
         const SizedBox(height: 20),
         const Text(
-          'Xác thực số điện thoại',
+          'Xác thực Email',
           style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.textDark),
         ),
         const SizedBox(height: 8),
@@ -220,9 +222,9 @@ class _OtpScreenState extends State<OtpScreen> with SingleTickerProviderStateMix
           text: TextSpan(
             style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.5),
             children: [
-              const TextSpan(text: 'Chúng tôi đã gửi mã OTP 6 chữ số đến\n'),
+              const TextSpan(text: 'Chúng tôi đã gửi mã OTP 6 chữ số đến hộp thư\n'),
               TextSpan(
-                text: widget.phone,
+                text: widget.email,
                 style: const TextStyle(
                   color: AppColors.primaryGreen,
                   fontWeight: FontWeight.bold,

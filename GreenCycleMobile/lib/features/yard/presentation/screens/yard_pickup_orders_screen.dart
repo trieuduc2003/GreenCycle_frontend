@@ -167,6 +167,7 @@ class _YardPickupOrdersScreenState extends State<YardPickupOrdersScreen> {
     final totalAmount = order['totalEstimatedAmount'] ?? 0;
     final itemsCount = order['itemsCount'] ?? 0;
     final sellerName = order['sellerName'] ?? 'Khách hàng';
+    final sellerPhone = order['sellerPhone'] as String?;
     final address = order['pickupAddress'] ?? 'Đang cập nhật địa chỉ...';
     final distanceKm = (order['distanceKm'] as num?)?.toDouble();
     final lat = (order['latitude'] as num?)?.toDouble();
@@ -246,6 +247,36 @@ class _YardPickupOrdersScreenState extends State<YardPickupOrdersScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1A2E22)),
                 ),
               ),
+              if (sellerPhone != null && sellerPhone.isNotEmpty)
+                InkWell(
+                  onTap: () async {
+                    final cleanPhone = sellerPhone.replaceAll(RegExp(r'\s+'), '');
+                    final uri = Uri.parse('tel:$cleanPhone');
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFA5D6A7)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.phone, size: 13, color: Color(0xFF1B8E5A)),
+                        const SizedBox(width: 4),
+                        Text(
+                          sellerPhone,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1B8E5A)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 10),

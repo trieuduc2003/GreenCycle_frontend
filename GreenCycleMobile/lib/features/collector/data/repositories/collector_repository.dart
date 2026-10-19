@@ -10,11 +10,20 @@ class CollectorRepository {
     required String token,
     double? latitude,
     double? longitude,
+    double? radiusKm,
   }) async {
-    // Nếu có tọa độ, truyền thêm query params để backend tính khoảng cách
+    // Nếu có tọa độ, truyền thêm query params để backend tính khoảng cách và lọc bán kính
     String url = ApiEndpoints.pendingPickupOrders;
+    final queryParams = <String>[];
     if (latitude != null && longitude != null) {
-      url += '?latitude=$latitude&longitude=$longitude';
+      queryParams.add('latitude=$latitude');
+      queryParams.add('longitude=$longitude');
+    }
+    if (radiusKm != null) {
+      queryParams.add('radiusKm=$radiusKm');
+    }
+    if (queryParams.isNotEmpty) {
+      url += '?${queryParams.join('&')}';
     }
     final uri = Uri.parse(url);
     final resp = await http.get(

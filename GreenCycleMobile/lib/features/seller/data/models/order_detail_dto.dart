@@ -16,6 +16,7 @@ class OrderDetailViewDto {
   final DateTime? updatedAt;
   final String? scrapYardName;
   final String? scrapYardAddress;
+  final String? scrapYardPhone;
   final String? pickupAddress;
   final double? pickupLatitude;
   final double? pickupLongitude;
@@ -44,6 +45,7 @@ class OrderDetailViewDto {
     this.updatedAt,
     this.scrapYardName,
     this.scrapYardAddress,
+    this.scrapYardPhone,
     this.pickupAddress,
     this.pickupLatitude,
     this.pickupLongitude,
@@ -76,6 +78,7 @@ class OrderDetailViewDto {
       updatedAt: json['updatedAt'] != null ? DateTime.tryParse(json['updatedAt']) : null,
       scrapYardName: json['scrapYardName'],
       scrapYardAddress: json['scrapYardAddress'],
+      scrapYardPhone: json['scrapYardPhone'],
       pickupAddress: json['pickupAddress'],
       pickupLatitude: (json['pickupLatitude'] as num?)?.toDouble(),
       pickupLongitude: (json['pickupLongitude'] as num?)?.toDouble(),

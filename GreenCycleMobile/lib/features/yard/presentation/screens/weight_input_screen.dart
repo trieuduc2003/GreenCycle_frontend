@@ -74,6 +74,7 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
   }
 
   Future<void> _sendConfirmation() async {
+    bool hasOverLimit = false;
     for (final d in _details) {
       if (d.actualWeight <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -87,6 +88,7 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
       if (d.actualWeight > 30) {
         final confirm = await _showHardLimitWarning(d.categoryName, d.actualWeight);
         if (!confirm) return;
+        hasOverLimit = true;
       }
     }
 
@@ -96,6 +98,7 @@ class _WeightInputScreenState extends State<WeightInputScreen> {
         token: widget.token,
         request: InitiateTransactionRequest(
           orderId: widget.orderId,
+          confirmedOverLimit: hasOverLimit,
           actualWeights: _details.map((d) => ActualWeightDto(
             orderDetailId: d.orderDetailId,
             actualWeight: d.actualWeight,
