@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/order_detail_dto.dart';
 import '../../data/repositories/order_repository.dart';
@@ -102,6 +103,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                              _order!.statusName.toLowerCase() == 'inprogress')) ...[
                           _buildLiveTrackingButton(),
                           const SizedBox(height: 16),
+                        ],
+                        if (_order!.statusName.toLowerCase() != 'completed' &&
+                            _order!.statusName.toLowerCase() != 'cancelled') ...[
+                          _buildCancelOrderButton(),
+                          const SizedBox(height: 20),
                         ],
                       ],
                     ),
@@ -319,6 +325,28 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  Future<void> _makePhoneCall(String phone) async {
+    final cleanPhone = phone.replaceAll(RegExp(r'\s+'), '');
+    final uri = Uri.parse('tel:$cleanPhone');
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Không thể mở cuộc gọi đến: $cleanPhone')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi cuộc gọi: $e')),
+        );
+      }
+    }
+  }
+
   // 2. Thẻ Địa điểm / Vựa hoặc Tài xế
   Widget _buildDestinationCard() {
     final isDropOff = _order!.methodId == 1;
@@ -364,10 +392,54 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
             const SizedBox(height: 4),
-            Text(
-              _order!.scrapYardAddress ?? 'Địa chỉ đang cập nhật',
-              style: const TextStyle(color: Color(0xFF555555), fontSize: 13),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.location_on_outlined, size: 16, color: Color(0xFF7A8B80)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _order!.scrapYardAddress ?? 'Địa chỉ đang cập nhật',
+                    style: const TextStyle(color: Color(0xFF555555), fontSize: 13),
+                  ),
+                ),
+              ],
             ),
+            if (_order!.scrapYardPhone != null && _order!.scrapYardPhone!.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFA5D6A7)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.phone_in_talk_rounded, size: 18, color: Color(0xFF1B8E5A)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Hotline Vựa: ${_order!.scrapYardPhone}',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1B8E5A)),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => _makePhoneCall(_order!.scrapYardPhone!),
+                      icon: const Icon(Icons.call, size: 14, color: Colors.white),
+                      label: const Text('Gọi ngay', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1B8E5A),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ] else ...[
             // Địa chỉ lấy hàng
             Row(
@@ -425,6 +497,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ],
                           ),
                         ),
+                        if (_order!.collectorPhone != null && _order!.collectorPhone!.isNotEmpty)
+                          IconButton(
+                            onPressed: () => _makePhoneCall(_order!.collectorPhone!),
+                            icon: const Icon(Icons.phone_forwarded_rounded, color: Color(0xFF1565C0), size: 22),
+                            tooltip: 'Gọi cho tài xế',
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              padding: const EdgeInsets.all(8),
+                            ),
+                          ),
                       ],
                     ),
                     if (_order!.collectorVehicleType != null || _order!.collectorLicensePlate != null) ...[
@@ -731,6 +813,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               builder: (_) => SellerQrDisplayScreen(
                 orderId: _order!.orderId,
                 orderInfo: '${_order!.items.length} loại rác • ${_translateMethod(_order!.methodName)}',
+                token: widget.token,
               ),
             ),
           );
@@ -760,6 +843,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 orderId: _order!.orderId,
                 pickupLatitude: _order!.pickupLatitude ?? 0.0,
                 pickupLongitude: _order!.pickupLongitude ?? 0.0,
+                collectorPhone: _order!.collectorPhone,
               ),
             ),
           );
@@ -773,6 +857,117 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildCancelOrderButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: _handleCancelOrder,
+        icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 20),
+        label: const Text(
+          'Hủy đơn hàng này',
+          style: TextStyle(color: Colors.redAccent, fontSize: 14, fontWeight: FontWeight.bold),
+        ),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: Color(0xFFFFCDD2), width: 1.5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          backgroundColor: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleCancelOrder() async {
+    final reasonController = TextEditingController();
+    final shouldCancel = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Xác nhận hủy đơn', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Bạn có chắc chắn muốn hủy đơn hàng này không? Hành động này không thể hoàn tác.',
+              style: TextStyle(fontSize: 14, color: Color(0xFF4A5568)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                hintText: 'Lý do hủy (không bắt buộc)',
+                hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Quay lại', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Xác nhận hủy', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldCancel != true) return;
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator(color: AppColors.primaryGreen)),
+      );
+
+      await _orderRepo.cancelOrder(
+        token: widget.token,
+        orderId: widget.orderId,
+        reason: reasonController.text.trim().isNotEmpty ? reasonController.text.trim() : null,
+      );
+
+      if (mounted) {
+        Navigator.pop(context); // Tắt loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã hủy đơn hàng thành công!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _fetchDetail(); // Load lại thông tin đơn hàng
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   String _translateStatus(String status) {

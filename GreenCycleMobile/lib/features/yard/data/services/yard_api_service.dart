@@ -18,14 +18,15 @@ class YardApiService {
     required String token,
     required double latitude,
     required double longitude,
+    double radiusMeters = 10000,
   }) async {
     // Xây dựng URL với query parameters tọa độ
     final uri = Uri.parse(ApiEndpoints.nearbyYards).replace(
       queryParameters: {
         'lat': latitude.toString(),
         'lng': longitude.toString(),
-        'radius': '50000000', // bán kính khổng lồ để luôn tìm thấy vựa test
-        'limit': '10',    // tối đa 10 kết quả
+        'radius': radiusMeters.toString(),
+        'limit': '20',
       },
     );
 

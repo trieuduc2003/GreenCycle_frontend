@@ -130,4 +130,30 @@ class OrderRepository {
       return null;
     }
   }
+
+  Future<bool> cancelOrder({
+    required String token,
+    required int orderId,
+    String? reason,
+  }) async {
+    try {
+      final response = await http.put(
+        Uri.parse('${ApiEndpoints.cancelOrder}/$orderId/cancel'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'reason': reason ?? 'Người bán hủy đơn'}),
+      );
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        return body['success'] == true;
+      }
+      final body = jsonDecode(response.body);
+      throw Exception(body['message'] ?? 'Không thể hủy đơn hàng');
+    } catch (e) {
+      rethrow;
+    }
+  }
 }

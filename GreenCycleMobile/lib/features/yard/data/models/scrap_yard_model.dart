@@ -47,15 +47,15 @@ class ScrapYardModel {
   factory ScrapYardModel.fromJson(Map<String, dynamic> json) {
     return ScrapYardModel(
       yardId: json['yardId'] as int,
-      name: json['scrapYardName'] as String? ?? 'Vựa không tên',
+      name: (json['name'] ?? json['scrapYardName']) as String? ?? 'Vựa không tên',
       address: json['address'] as String? ?? 'Không có địa chỉ',
       // Tọa độ được lưu trong object "location" hoặc trực tiếp
       latitude: _parseDouble(json['latitude'] ?? json['location']?['latitude']),
       longitude: _parseDouble(json['longitude'] ?? json['location']?['longitude']),
-      distanceInMeters: _parseDouble(json['distanceInMeters']),
+      distanceInMeters: _parseDouble(json['distanceMeters'] ?? json['distanceInMeters']),
       isOpening: json['isOpening'] as bool? ?? false,
       operatingHours: json['operatingHours'] as String?,
-      ranking: _parseDouble(json['ranking']),
+      ranking: _parseDouble(json['ranking'] ?? 5.0),
     );
   }
 

@@ -51,13 +51,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return null;
   }
 
+  String? _validateEmail(String? v) {
+    if (v == null || v.trim().isEmpty) return 'Vui lòng nhập địa chỉ email';
+    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v.trim())) {
+      return 'Địa chỉ email không hợp lệ';
+    }
+    return null;
+  }
+
   String? _validatePassword(String? v) {
     if (v == null || v.isEmpty) return 'Vui lòng nhập mật khẩu';
     if (v.length < 6) return 'Mật khẩu phải có ít nhất 6 ký tự';
     return null;
   }
 
-  // ─── Gửi OTP ─────────────────────────────────────────────────────────────
+  // ─── Gửi OTP qua Email ──────────────────────────────────────────────────
   Future<void> _onContinuePressed() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -66,23 +74,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    final email = _emailController.text.trim();
+    final phone = _phoneController.text.trim();
+
     setState(() => _isLoading = true);
     try {
-      await _authRepository.sendOtp(_phoneController.text.trim());
+      await _authRepository.sendOtp(email: email, phone: phone);
       setState(() => _isLoading = false);
 
       if (!mounted) return;
 
-      // Điều hướng sang màn hình OTP
+      // Điều hướng sang màn hình OTP (Xác thực qua Email)
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => OtpScreen(
-            phone: _phoneController.text.trim(),
+            email: email,
+            phone: phone,
             buildRegisterRequest: (otp) => RegisterRequestDto(
               fullName: _fullNameController.text.trim(),
-              phone:    _phoneController.text.trim(),
-              email:    _emailController.text.trim(),
+              phone:    phone,
+              email:    email,
               password: _passwordController.text,
               roleId:   _selectedRoleId,
               otpCode:  otp,

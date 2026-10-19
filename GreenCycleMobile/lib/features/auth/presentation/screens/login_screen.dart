@@ -6,10 +6,12 @@ import '../../data/repositories/auth_repository.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/google_login_button.dart';
 import 'register_screen.dart';
+import 'forgot_password_screen.dart';
 import 'role_selection_screen.dart';
 import '../../../seller/presentation/screens/seller_home_screen.dart';
 import '../../../yard/presentation/screens/yard_dashboard_screen.dart';
 import '../../../collector/presentation/screens/collector_dashboard_screen.dart';
+import '../../../notification/data/services/fcm_notification_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -34,6 +36,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    // Đánh thức Render server từ ngầm ngay khi user mở màn hình đăng nhập
+    _authRepository.preWarmBackend();
     _ensureGoogleSignInInitialized();
   }
 
@@ -81,7 +85,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _navigateBasedOnRole(response);
     } catch (e) {
       setState(() => _isLoading = false);
-      _showMessage(e.toString().replaceAll('Exception: ', ''));
+      String errorMsg = e.toString().replaceAll('Exception: ', '');
+      if (errorMsg.contains('SHUTDOWN') || errorMsg.contains('Login failed for user') || errorMsg.contains('administrators may connect')) {
+        errorMsg = 'Máy chủ dữ liệu đang bảo trì/khởi động lại trong giây lát. Vui lòng thử lại sau 1-2 phút.';
+      }
+      _showMessage(errorMsg);
     }
   }
 
@@ -121,6 +129,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _navigateBasedOnRole(LoginResponseDto response) {
+    FcmNotificationService.instance.initializeAndRegisterToken(authToken: response.token);
+
     Widget destination;
     switch (response.roleName) {
       case 'Seller':
@@ -182,7 +192,32 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: _passwordController,
                 obscureText: true,
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+                    );
+                  },
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(50, 30),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    'Quên mật khẩu?',
+                    style: TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
 
               _buildSubmitButton(),
               const SizedBox(height: 24),

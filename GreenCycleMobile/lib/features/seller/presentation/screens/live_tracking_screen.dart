@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:signalr_netcore/signalr_client.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/api_endpoints.dart';
 import '../../../../core/constants/app_colors.dart';
 
@@ -10,6 +11,7 @@ class LiveTrackingScreen extends StatefulWidget {
   final int orderId;
   final double pickupLatitude;
   final double pickupLongitude;
+  final String? collectorPhone;
   
   const LiveTrackingScreen({
     super.key,
@@ -17,6 +19,7 @@ class LiveTrackingScreen extends StatefulWidget {
     required this.orderId,
     required this.pickupLatitude,
     required this.pickupLongitude,
+    this.collectorPhone,
   });
 
   @override
@@ -48,6 +51,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
         .build();
 
     _hubConnection?.on("CollectorLocationUpdated", _handleLocationUpdate);
+    _hubConnection?.on("CollectorApproaching", _handleGeofenceApproaching);
 
     try {
       await _hubConnection?.start();
@@ -77,6 +81,48 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
           // Optionally center map on collector
           _mapController.move(_collectorLocation!, _mapController.camera.zoom);
         }
+      }
+    }
+  }
+
+  bool _hasNotifiedApproaching = false;
+
+  void _handleGeofenceApproaching(List<dynamic>? parameters) {
+    if (parameters != null && parameters.isNotEmpty && !_hasNotifiedApproaching) {
+      _hasNotifiedApproaching = true;
+      final data = parameters[0] as Map<String, dynamic>;
+      final distance = data['distanceMeters'] ?? data['DistanceMeters'] ?? 500;
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: const Row(
+              children: [
+                Icon(Icons.notifications_active_rounded, color: Color(0xFFE59835), size: 28),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text('Tài xế đang đến gần! 🔔', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22))),
+                ),
+              ],
+            ),
+            content: Text(
+              'Tài xế đang cách nhà bạn khoảng ${distance.toString()}m.\nBạn vui lòng chuẩn bị phế liệu sẵn sàng nhé!',
+              style: const TextStyle(fontSize: 14.5, height: 1.4, color: Color(0xFF4A5D50)),
+            ),
+            actions: [
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Tôi đã hiểu, chuẩn bị ngay!'),
+              ),
+            ],
+          ),
+        );
       }
     }
   }
@@ -207,6 +253,27 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
                         SizedBox(height: 4),
                         Text('Vui lòng chuẩn bị rác đã phân loại', style: TextStyle(fontSize: 13, color: Color(0xFF7A8B80))),
                       ],
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () async {
+                      final phone = widget.collectorPhone?.isNotEmpty == true 
+                          ? widget.collectorPhone! 
+                          : '0355613755';
+                      final uri = Uri.parse('tel:$phone');
+                      if (await canLaunchUrl(uri)) {
+                        await launchUrl(uri);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(24),
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFE8F5E9),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.phone_in_talk_rounded, color: AppColors.primaryGreen, size: 22),
                     ),
                   ),
                 ],

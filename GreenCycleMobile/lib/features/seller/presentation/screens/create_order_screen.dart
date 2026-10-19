@@ -4,6 +4,7 @@ import '../../data/models/order_dto.dart';
 import '../../data/repositories/order_repository.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../../yard/presentation/screens/nearby_yards_screen.dart';
+import 'seller_qr_display_screen.dart';
 
 /// Màn hình A06: Tạo đơn & khai báo rác (Người bán)
 class CreateOrderScreen extends StatefulWidget {
@@ -13,7 +14,7 @@ class CreateOrderScreen extends StatefulWidget {
   const CreateOrderScreen({
     super.key,
     required this.token,
-    required this.fullName,
+    this.fullName = 'Người bán',
   });
 
   @override
@@ -193,12 +194,40 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    if (isDropOff) {
-                      Navigator.pushReplacement(
+              if (isDropOff) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context); // Đóng dialog
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SellerQrDisplayScreen(
+                            orderId: response.orderId,
+                            orderInfo: 'Đơn hàng tự mang đi #${response.orderId}',
+                            token: widget.token,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.qr_code_rounded, size: 20),
+                    label: const Text('Mở mã QR cho vựa quét ngay', style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context); // Đóng dialog
+                      Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => NearbyYardsScreen(
@@ -207,23 +236,35 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           ),
                         ),
                       );
-                    } else {
-                      Navigator.pop(context); // Đóng Dialog
-                      Navigator.pop(context); // Quay về Home
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryGreen,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: Text(
-                    isDropOff ? 'Xem bản đồ vựa gần tôi' : 'Hoàn tất',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    },
+                    icon: const Icon(Icons.map_outlined, size: 20),
+                    label: const Text('Xem bản đồ vựa gần tôi'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primaryGreen,
+                      side: const BorderSide(color: AppColors.primaryGreen),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
                   ),
                 ),
-              ),
+              ] else ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context); // Đóng Dialog
+                      Navigator.pop(context); // Quay về Home
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
+                    child: const Text('Hoàn tất & Theo dõi đơn', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
             ],
           ),
         );

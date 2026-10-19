@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../data/models/voucher_dto.dart';
 import '../../data/models/wallet_dto.dart';
@@ -423,10 +424,37 @@ class _RewardStoreScreenState extends State<RewardStoreScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              // Buttons
+              // Social Share Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
+                  onPressed: () {
+                    final title = res.userVoucher?.title ?? 'Quà tặng';
+                    final shareText = '🌱 Tôi vừa dùng GreenPoints đổi thành công voucher "$title" trên ứng dụng GreenCycle!\n'
+                        '✨ Đã góp phần giảm ~${res.co2ReducedKg}kg CO₂ và bảo vệ tương đương ~${res.treesSaved} cây xanh 🌲.\n'
+                        'Hãy cùng tôi phân loại rác và tích điểm đổi quà nhé! 🌍💚\n'
+                        '👉 Khám phá tại: https://greencycle.vn';
+
+                    Share.share(
+                      shareText,
+                      subject: 'Đổi quà sống xanh cùng GreenCycle 🌿',
+                    );
+                  },
+                  icon: const Icon(Icons.share_rounded, size: 20, color: Colors.white),
+                  label: const Text('Khoe thành tích sống xanh', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B8E5A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Buttons
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);
                     Navigator.push(
@@ -434,12 +462,11 @@ class _RewardStoreScreenState extends State<RewardStoreScreen> {
                       MaterialPageRoute(builder: (_) => MyVouchersScreen(token: widget.token)),
                     );
                   },
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text('Xem trong Kho quà'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryGreen,
-                    foregroundColor: Colors.white,
+                  icon: const Icon(Icons.inventory_2_outlined, color: Color(0xFF1B8E5A)),
+                  label: const Text('Xem trong Kho quà', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B8E5A))),
+                  style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 13),
+                    side: const BorderSide(color: Color(0xFF1B8E5A)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),

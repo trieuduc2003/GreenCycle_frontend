@@ -1,13 +1,16 @@
 class ApiEndpoints {
-  static const String baseUrl      = 'https://10.33.61.84:7031/api';
-  static const String hubBaseUrl   = 'https://10.33.61.84:7031'; // SignalR base
+  static const String baseUrl      = 'https://greencycle-api-latest.onrender.com/api';
+  static const String hubBaseUrl   = 'https://greencycle-api-latest.onrender.com'; // SignalR base
 
   // Auth
-  static const String login        = '$baseUrl/auth/login';
-  static const String register     = '$baseUrl/auth/register';
-  static const String sendOtp      = '$baseUrl/auth/send-otp';
-  static const String googleLogin  = '$baseUrl/auth/google-login';
-  static const String logout       = '$baseUrl/auth/logout';
+  static const String health               = '$baseUrl/auth/health';
+  static const String login                = '$baseUrl/auth/login';
+  static const String register             = '$baseUrl/auth/register';
+  static const String sendOtp              = '$baseUrl/auth/send-otp';
+  static const String googleLogin          = '$baseUrl/auth/google-login';
+  static const String forgotPasswordSendOtp = '$baseUrl/auth/forgot-password/send-otp';
+  static const String forgotPasswordReset   = '$baseUrl/auth/forgot-password/reset';
+  static const String logout               = '$baseUrl/auth/logout';
 
   // Wallet
   static const String walletBalance      = '$baseUrl/wallet/balance';
@@ -20,6 +23,7 @@ class ApiEndpoints {
   static const String orderHistory     = '$baseUrl/orders/history';
   static const String yardOrderHistory = '$baseUrl/orders/yard-history';
   static const String orderDetail      = '$baseUrl/orders';
+  static const String cancelOrder      = '$baseUrl/orders'; // /{orderId}/cancel
 
   // Pick-up lifecycle (Collector)
   static const String pendingPickupOrders = '$baseUrl/orders/pickup/pending';

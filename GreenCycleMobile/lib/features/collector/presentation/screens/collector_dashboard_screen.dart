@@ -48,22 +48,37 @@ class _CollectorDashboardScreenState extends State<CollectorDashboardScreen> {
     _checkActiveOrder();
     _pollingTimer = Timer.periodic(const Duration(seconds: 30), (_) => _checkActiveOrder());
 
-    // 2. Start location stream
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10, // Update every 10 meters
-    );
+    // 2. Start location stream if permitted
+    _initLocationStream();
+  }
 
-    _positionStreamSub = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
-      if (_activeOrderId != null) {
-        _repo.updateLiveLocation(
-          token: widget.token,
-          orderId: _activeOrderId!,
-          latitude: position.latitude,
-          longitude: position.longitude,
-        );
+  Future<void> _initLocationStream() async {
+    try {
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) return;
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        return;
       }
-    });
+
+      const locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 15, // Update every 15 meters
+      );
+
+      _positionStreamSub = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
+        if (_activeOrderId != null) {
+          _repo.updateLiveLocation(
+            token: widget.token,
+            orderId: _activeOrderId!,
+            latitude: position.latitude,
+            longitude: position.longitude,
+          );
+        }
+      }, onError: (_) {
+        // Safe ignore error
+      });
+    } catch (_) {}
   }
 
   Future<void> _checkActiveOrder() async {

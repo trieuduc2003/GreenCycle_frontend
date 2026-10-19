@@ -28,7 +28,7 @@ class CollectorOrderDto {
       orderId: json['orderId'] as int,
       sellerName: json['sellerName'] as String? ?? 'Khách hàng',
       sellerPhone: json['sellerPhone'] as String?,
-      address: json['address'] as String? ?? '',
+      address: (json['pickupAddress'] ?? json['address']) as String? ?? 'Chưa cập nhật địa chỉ',
       latitude: (json['latitude'] as num?)?.toDouble() ?? 0.0,
       longitude: (json['longitude'] as num?)?.toDouble() ?? 0.0,
       totalEstimatedWeight: (json['totalEstimatedWeight'] as num?)?.toDouble() ?? 0.0,
@@ -36,7 +36,7 @@ class CollectorOrderDto {
       createdAt: json['createdAt'] != null 
           ? DateTime.parse(json['createdAt'] as String) 
           : DateTime.now(),
-      distance: (json['distance'] as num?)?.toDouble(),
+      distance: (json['distanceKm'] != null ? (json['distanceKm'] as num).toDouble() : (json['distance'] as num?)?.toDouble()),
     );
   }
 }

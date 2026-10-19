@@ -50,11 +50,42 @@ class LoginResponseDto {
 
 // ─── Gửi OTP (Bước 1 đăng ký) ───────────────────────
 class SendOtpRequestDto {
-  final String phone;
+  final String? email;
+  final String? phone;
 
-  SendOtpRequestDto({required this.phone});
+  SendOtpRequestDto({this.email, this.phone});
 
-  Map<String, dynamic> toJson() => {'phone': phone};
+  Map<String, dynamic> toJson() => {
+    if (email != null) 'email': email,
+    if (phone != null) 'phone': phone,
+  };
+}
+
+// ─── Quên mật khẩu ────────────────────────────────────
+class ForgotPasswordOtpRequestDto {
+  final String email;
+
+  ForgotPasswordOtpRequestDto({required this.email});
+
+  Map<String, dynamic> toJson() => {'email': email};
+}
+
+class ResetPasswordRequestDto {
+  final String email;
+  final String otpCode;
+  final String newPassword;
+
+  ResetPasswordRequestDto({
+    required this.email,
+    required this.otpCode,
+    required this.newPassword,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'email': email,
+    'otpCode': otpCode,
+    'newPassword': newPassword,
+  };
 }
 
 // ─── Đăng ký (Bước 2 — kèm OTP) ─────────────────────

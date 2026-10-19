@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/location_helper.dart';
 import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../data/repositories/wallet_repository.dart';
@@ -22,6 +23,8 @@ import '../../../notification/presentation/screens/notifications_screen.dart';
 import '../../../settings/presentation/screens/app_settings_screen.dart';
 import '../../../support/presentation/screens/support_screen.dart';
 import '../../../policy/presentation/screens/policy_screen.dart';
+import '../../../transaction/presentation/widgets/celebration_success_dialog.dart';
+import '../../../yard/presentation/widgets/rating_review_dialog.dart';
 
 
 /// Màn hình Home của Người bán (Seller) — A05 trong UI spec.
@@ -101,12 +104,52 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
         .build();
 
     _hubConnection?.on('ReceiveDoubleConfirmation', _handleDoubleConfirmation);
+    _hubConnection?.on('CollectorApproaching', _handleCollectorApproaching);
 
     try {
       await _hubConnection?.start();
       print('SignalR Connected');
     } catch (e) {
       print('SignalR Connect Error: $e');
+    }
+  }
+
+  void _handleCollectorApproaching(List<Object?>? args) {
+    if (args != null && args.isNotEmpty && mounted) {
+      final payload = args.first as Map<String, dynamic>;
+      final distance = payload['distanceMeters'] ?? payload['DistanceMeters'] ?? 500;
+      final msg = payload['message'] ?? payload['Message'] ?? 'Tài xế đang đến rất gần!';
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Row(
+            children: [
+              Icon(Icons.notifications_active_rounded, color: Color(0xFFE59835), size: 28),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('Tài xế sắp tới! 🔔', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A2E22))),
+              ),
+            ],
+          ),
+          content: Text(
+            '$msg\nKhoảng cách hiện tại: ~${distance}m.',
+            style: const TextStyle(fontSize: 14.5, height: 1.4, color: Color(0xFF4A5D50)),
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Tôi đã hiểu, chuẩn bị rác ngay!'),
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -161,33 +204,7 @@ class _SellerHomeScreenState extends State<SellerHomeScreen>
   Future<void> _fetchNearbyYards() async {
     setState(() => _isLoadingYards = true);
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        if (mounted) setState(() => _isLoadingYards = false);
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (mounted) setState(() => _isLoadingYards = false);
-        return;
-      }
-
-      // Dùng vị trí cũ trước cho nhanh, sau đó nếu có GPS mới thì update
-      Position? position = await Geolocator.getLastKnownPosition();
-      try {
-        position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.low,
-            timeLimit: Duration(seconds: 8),
-          ),
-        ).timeout(const Duration(seconds: 10));
-      } catch (_) {}
-
+      final position = await LocationHelper.getCurrentPosition();
       if (position == null) {
         if (mounted) setState(() => _isLoadingYards = false);
         return;
@@ -1359,12 +1376,36 @@ class _DoubleConfirmationDialogState extends State<_DoubleConfirmationDialog> {
         orderId: widget.payload.orderId,
       );
       if (mounted) {
-        Navigator.pop(context); // close dialog
+        Navigator.pop(context); // close double-confirm dialog
         widget.onConfirmed();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Thành công! Nhận ${widget.payload.netGreenPoints} GP'),
-            backgroundColor: AppColors.primaryGreen,
+
+        // Tính toán số tiền thực nhận và tác động môi trường
+        final netAmount = widget.payload.totalActualAmount - widget.payload.platformFee;
+        final co2Saved = (widget.payload.netGreenPoints * 0.05).clamp(1.5, 999.0);
+        final treesSaved = co2Saved / 20.0;
+
+        // Hiển thị Popup chúc mừng, tác động sống xanh, chia sẻ mạng xã hội & đánh giá
+        showDialog(
+          context: context,
+          builder: (dialogCtx) => CelebrationSuccessDialog(
+            title: 'Giao Dịch Thành Công! 🎉',
+            message: 'Bạn đã hoàn tất bán phế liệu cho ${widget.payload.partnerDisplayName}. Số tiền và điểm GP đã được cộng ngay vào ví của bạn!',
+            greenPointsEarned: widget.payload.netGreenPoints,
+            amountEarned: netAmount,
+            co2ReducedKg: co2Saved,
+            treesSaved: treesSaved,
+            partnerName: widget.payload.partnerDisplayName,
+            onRatePartner: () {
+              Navigator.pop(dialogCtx);
+              showDialog(
+                context: context,
+                builder: (_) => RatingReviewDialog(
+                  token: widget.token,
+                  yardId: widget.payload.orderId,
+                  partnerName: widget.payload.partnerDisplayName,
+                ),
+              );
+            },
           ),
         );
       }
